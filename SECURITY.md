@@ -16,7 +16,8 @@ Include the affected version, operating system, reproduction steps, expected imp
 - API requests require a randomly generated per-process token.
 - The dashboard does not upload telemetry or contact a remote analytics service.
 - The collector does not read Codex authentication files.
-- Reasoning text, tool commands, tool arguments, and tool outputs are excluded from the derived database.
+- Reasoning text, tool commands, tool arguments, tool outputs, error bodies, raw agent identifiers, and unknown payload content are excluded from the derived database.
+- Tool metadata is allowlisted, status values are normalized, and agent identifiers are hashed before persistence.
 - Runtime files are stored in the current user's application-data directory.
 
 The dashboard reads local Codex session files. Install it only from a source you trust and review changes before upgrading.

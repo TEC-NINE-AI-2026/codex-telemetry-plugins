@@ -17,6 +17,24 @@ async function waitForRuntime(path, timeoutMs = 8000) {
   throw new Error('runtime file was not created');
 }
 
+async function waitForExit(child, timeoutMs = 5000) {
+  if (child.exitCode !== null) return;
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('server did not exit')), timeoutMs)),
+  ]);
+}
+
+async function removeWithRetry(path) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try { await rm(path, { recursive: true, force: true }); return; }
+    catch (error) {
+      if (error.code !== 'EBUSY' || attempt === 11) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  }
+}
+
 test('server binds localhost and rejects API requests without the local token', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'codex-telemetry-server-'));
   const dataRoot = join(root, 'data');
@@ -28,8 +46,9 @@ test('server binds localhost and rejects API requests without the local token', 
     windowsHide: true,
   });
   t.after(async () => {
-    if (!child.killed) child.kill();
-    await rm(root, { recursive: true, force: true });
+    if (child.exitCode === null) child.kill();
+    await waitForExit(child).catch(() => {});
+    await removeWithRetry(root);
   });
   const runtimePath = join(dataRoot, 'runtime.json');
   const runtime = await waitForRuntime(runtimePath);
@@ -39,5 +58,10 @@ test('server binds localhost and rejects API requests without the local token', 
   const authorized = await fetch(`${base}/api/health`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(authorized.status, 200);
   assert.equal((await authorized.json()).ok, true);
+  const analytics = await fetch(`${base}/api/analytics?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
+  assert.equal(analytics.status, 200);
+  const payload = await analytics.json();
+  for (const key of ['coverage', 'overview', 'efficiency', 'cache', 'tools', 'agents', 'context', 'reliability', 'concurrency', 'workModes']) assert.ok(key in payload);
   await fetch(`${base}/api/shutdown`, { method: 'POST', headers: { 'X-Dashboard-Token': runtime.token } });
+  await waitForExit(child);
 });

@@ -1,9 +1,9 @@
 ---
 name: codex-telemetry-dashboard
-description: Open, inspect, or stop the local Codex telemetry dashboard that reports per-turn latency, reasoning/tool/reply timing, token usage, context utilization, and subscription limit snapshots. Use when the user asks for the Codex performance panel, Codex telemetry, task timing, token statistics, or usage trends. Do not use for OpenAI API billing analysis or application telemetry unrelated to the local Codex desktop logs.
+description: Open, inspect, or stop the local Codex efficiency and health analytics dashboard for latency, model and reasoning-effort comparisons, cache efficiency, tool and multi-agent health, context pressure, reliability, concurrency, work modes, tokens, and usage limits. Use when the user asks for the Codex efficiency panel, health panel, performance panel, local telemetry, task timing, token statistics, tool health, agent activity, or usage trends. Do not use for OpenAI API billing analysis or application telemetry unrelated to the local Codex desktop logs.
 ---
 
-# Codex Telemetry Dashboard
+# Codex Efficiency and Health Analytics Dashboard
 
 Use the bundled deterministic scripts; do not inspect message bodies or authentication files yourself.
 

@@ -1,7 +1,7 @@
 {
   "name": "codex-telemetry-dashboard",
-  "version": "1.1.0",
-  "description": "Local telemetry dashboard for Codex task latency, token, context, and subscription usage metrics.",
+  "version": "1.2.0",
+  "description": "Local Codex efficiency and health analytics for latency, models, tools, agents, tokens, context, reliability, and usage limits.",
   "author": {
     "name": "Codex Telemetry Dashboard Contributors",
     "url": "https://github.com/TEC-NINE-AI-2026"
@@ -18,9 +18,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Codex \u6027\u80fd\u9762\u677f",
-    "shortDescription": "\u67e5\u770b\u672c\u5730 Codex \u4efb\u52a1\u8017\u65f6\u3001Token\u3001\u4e0a\u4e0b\u6587\u4e0e\u8ba2\u9605\u7528\u91cf\u3002",
-    "longDescription": "\u5728 Codex \u5185\u6253\u5f00\u53ea\u8bfb\u7684\u672c\u5730\u6027\u80fd\u9762\u677f\uff0c\u6309\u9879\u76ee\u3001\u4efb\u52a1\u548c\u6d88\u606f\u8f6e\u6b21\u5206\u6790\u63a5\u6536\u3001\u63a8\u7406\u3001\u5de5\u5177\u4e0e\u56de\u590d\u9636\u6bb5\uff0c\u5e76\u6301\u7eed\u6c47\u603b Token\u3001\u4e0a\u4e0b\u6587\u7a97\u53e3\u548c\u8ba2\u9605\u7528\u91cf\u3002",
+    "displayName": "Codex \u6548\u7387\u4e0e\u5065\u5eb7\u5ea6\u5206\u6790\u9762\u677f",
+    "shortDescription": "\u5206\u6790\u672c\u5730 Codex \u6548\u7387\u3001\u5de5\u5177\u3001\u667a\u80fd\u4f53\u3001Token\u3001\u4e0a\u4e0b\u6587\u4e0e\u4efb\u52a1\u5065\u5eb7\u5ea6\u3002",
+    "longDescription": "\u5728 Codex \u5185\u6253\u5f00\u53ea\u8bfb\u7684\u672c\u5730\u6548\u7387\u4e0e\u5065\u5eb7\u5ea6\u5206\u6790\u9762\u677f\uff0c\u6309\u9879\u76ee\u3001\u6a21\u578b\u3001\u63a8\u7406\u5f3a\u5ea6\u3001\u72b6\u6001\u548c\u5de5\u4f5c\u6a21\u5f0f\u5206\u6790\u8017\u65f6\u3001\u7f13\u5b58\u3001\u5de5\u5177\u3001\u591a\u667a\u80fd\u4f53\u3001\u5e76\u53d1\u3001\u4e0a\u4e0b\u6587\u3001\u53ef\u9760\u6027\u548c\u8ba2\u9605\u9650\u989d\u3002",
     "developerName": "Codex Telemetry Dashboard Contributors",
     "websiteURL": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins",
     "category": "Productivity",
@@ -29,9 +29,9 @@
       "Read"
     ],
     "defaultPrompt": [
-      "\u6253\u5f00 Codex \u6027\u80fd\u9762\u677f",
-      "\u67e5\u770b\u6700\u8fd1 7 \u5929\u7684 Codex \u6027\u80fd\u6307\u6807",
-      "\u505c\u6b62 Codex \u6027\u80fd\u9762\u677f\u670d\u52a1"
+      "\u6253\u5f00 Codex \u6548\u7387\u4e0e\u5065\u5eb7\u5ea6\u5206\u6790\u9762\u677f",
+      "\u67e5\u770b\u6700\u8fd1 7 \u5929\u7684 Codex \u6548\u7387\u4e0e\u5065\u5eb7\u6307\u6807",
+      "\u505c\u6b62 Codex \u6548\u7387\u4e0e\u5065\u5eb7\u5ea6\u5206\u6790\u9762\u677f\u670d\u52a1"
     ],
     "brandColor": "#5B6CFF",
     "composerIcon": "./assets/logo.svg",

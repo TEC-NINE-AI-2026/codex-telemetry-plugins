@@ -8,7 +8,7 @@
 ```powershell
 Set-Location E:\project\codex-telemetry-plugins
 git add -A
-git commit -m "feat(plugin): 发布 Codex 性能面板 Marketplace"
+git commit -m "feat(plugin): 发布 Codex 效率与健康度分析面板 Marketplace"
 git remote add origin https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins.git
 git push -u origin main
 ```
@@ -28,22 +28,22 @@ codex plugin list
 完全退出并重新打开 Codex，新建任务并输入：
 
 ```text
-打开 Codex 性能面板
+打开 Codex 效率与健康度分析面板
 ```
 
 确认面板能打开后，再输入：
 
 ```text
-停止 Codex 性能面板服务
+停止 Codex 效率与健康度分析面板服务
 ```
 
 ## 创建版本标签
 
-当前插件版本是 `1.1.0`。首次发布验证完成后，可以创建对应标签：
+当前插件版本是 `1.2.0`。发布验证完成后，可以创建对应标签：
 
 ```powershell
-git tag -a v1.1.0 -m "Codex Telemetry Dashboard 1.1.0"
-git push origin v1.1.0
+git tag -a v1.2.0 -m "Codex Efficiency and Health Analytics Dashboard 1.2.0"
+git push origin v1.2.0
 ```
 
 ## 后续更新

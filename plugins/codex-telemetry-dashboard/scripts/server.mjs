@@ -72,7 +72,9 @@ function filtersFrom(url) {
     range: url.searchParams.get('range') || '7d',
     project: url.searchParams.get('project') || '',
     model: url.searchParams.get('model') || '',
+    effort: url.searchParams.get('effort') || '',
     status: url.searchParams.get('status') || '',
+    mode: url.searchParams.get('mode') || '',
   };
 }
 
@@ -102,12 +104,15 @@ const server = createServer(async (request, response) => {
       if (request.method === 'GET' && url.pathname === '/api/summary') {
         return sendJson(response, 200, store.summary(filtersFrom(url), { importing: collector.importing }));
       }
+      if (request.method === 'GET' && url.pathname === '/api/analytics') {
+        return sendJson(response, 200, store.analytics(filtersFrom(url)));
+      }
       if (request.method === 'GET' && url.pathname === '/api/tasks') {
         return sendJson(response, 200, { generatedAtMs: Date.now(), tasks: store.taskList(filtersFrom(url)) });
       }
       const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/turns$/u);
       if (request.method === 'GET' && match) {
-        return sendJson(response, 200, { generatedAtMs: Date.now(), turns: store.taskTurns(decodeURIComponent(match[1])) });
+        return sendJson(response, 200, { generatedAtMs: Date.now(), turns: store.taskTurns(decodeURIComponent(match[1]), filtersFrom(url)) });
       }
       if (request.method === 'GET' && url.pathname === '/api/events') {
         response.writeHead(200, {

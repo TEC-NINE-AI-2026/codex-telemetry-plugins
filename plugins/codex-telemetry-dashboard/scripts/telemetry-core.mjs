@@ -17,7 +17,15 @@ const KNOWN_PAYLOAD_TYPES = new Set([
 const TOOL_ITEM_TYPES = new Set([
   'CommandExecution', 'McpToolCall', 'Extension', 'DynamicToolCall',
   'CollabAgentToolCall', 'FileChange', 'ImageView', 'SubAgentActivity',
+  'ComputerUse', 'ComputerToolCall', 'FileSearch', 'WebSearch', 'CodeInterpreter',
+  'ApplyPatch',
 ]);
+
+const SUCCESS_STATUSES = new Set(['completed', 'success', 'succeeded', 'ok']);
+const FAILURE_STATUSES = new Set(['failed', 'failure', 'error']);
+const ABORTED_STATUSES = new Set(['aborted']);
+const CANCELLED_STATUSES = new Set(['cancelled', 'canceled']);
+const EXECUTION_MODES = new Set(['local', 'worktree', 'cloud', 'handoff', 'background', 'automation']);
 
 function numberOrNull(value) {
   const result = Number(value);
@@ -74,6 +82,90 @@ function parseJson(value, fallback = null) {
 
 function stableId(parts) {
   return createHash('sha256').update(parts.map((part) => String(part ?? '')).join('|')).digest('hex');
+}
+
+function safeLabel(value, limit = 100) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > limit || !/^[\p{L}\p{N}_.:/@+-]+$/u.test(trimmed)) return null;
+  return trimmed;
+}
+
+function firstSafeLabel(values, limit = 100) {
+  for (const value of values) {
+    const label = safeLabel(value, limit);
+    if (label) return label;
+  }
+  return null;
+}
+
+function normalizeToolStatus(value) {
+  const status = safeLabel(value, 32)?.toLowerCase();
+  if (!status) return 'unknown';
+  if (SUCCESS_STATUSES.has(status)) return 'success';
+  if (FAILURE_STATUSES.has(status)) return 'failure';
+  if (ABORTED_STATUSES.has(status)) return 'aborted';
+  if (CANCELLED_STATUSES.has(status)) return 'cancelled';
+  return 'unknown';
+}
+
+function normalizeExecutionMode(value) {
+  const mode = safeLabel(value, 32)?.toLowerCase();
+  return EXECUTION_MODES.has(mode) ? mode : null;
+}
+
+function extractDimensions(payload = {}) {
+  const environment = payload.environment && typeof payload.environment === 'object' ? payload.environment : {};
+  const automation = payload.automation && typeof payload.automation === 'object' ? payload.automation : {};
+  const dimensions = {
+    speed: firstSafeLabel([payload.speed, payload.service_tier], 40),
+    reasoningMode: firstSafeLabel([payload.reasoning_mode, payload.reasoning?.mode], 40),
+    reasoningContext: firstSafeLabel([payload.reasoning_context, payload.reasoning?.context], 40),
+    executionMode: normalizeExecutionMode(payload.execution_mode ?? payload.work_mode ?? environment.type),
+    origin: firstSafeLabel([payload.originator, payload.origin, typeof payload.source === 'string' ? payload.source : null], 80),
+    automationKind: firstSafeLabel([payload.automation_kind, automation.kind], 80),
+  };
+  if (!dimensions.executionMode && dimensions.automationKind) dimensions.executionMode = 'automation';
+  return Object.fromEntries(Object.entries(dimensions).filter(([, value]) => value !== null));
+}
+
+function toolCategory(type) {
+  if (type === 'CommandExecution') return 'shell';
+  if (type === 'McpToolCall') return 'mcp';
+  if (type === 'Extension' || type === 'DynamicToolCall') return 'plugin';
+  if (type === 'FileChange' || type === 'ApplyPatch') return 'file-change';
+  if (type === 'ImageView') return 'image';
+  if (type === 'ComputerUse' || type === 'ComputerToolCall') return 'computer-use';
+  if (type === 'CollabAgentToolCall' || type === 'SubAgentActivity') return 'sub-agent';
+  if (type === 'FileSearch') return 'file-search';
+  if (type === 'WebSearch') return 'web-search';
+  if (type === 'CodeInterpreter') return 'code-interpreter';
+  return 'unknown';
+}
+
+function extractToolMetadata(item = {}) {
+  if (!TOOL_ITEM_TYPES.has(item.type)) return {};
+  const category = toolCategory(item.type);
+  const server = firstSafeLabel([item.server, item.server_name, item.mcp_server], 80);
+  const explicitName = firstSafeLabel([item.tool, item.tool_name, item.name, item.action], 100);
+  const defaults = {
+    shell: 'Shell', mcp: 'MCP', plugin: 'Plugin', 'file-change': 'File change', image: 'Image view',
+    'computer-use': 'Computer Use', 'sub-agent': 'Sub-agent', 'file-search': 'File search',
+    'web-search': 'Web search', 'code-interpreter': 'Code interpreter', unknown: 'Unknown tool',
+  };
+  const rawAgentId = firstSafeLabel([
+    item.agent_id, item.agentId, item.subagent_id, item.sub_agent_id, item.receiver_agent_id, item.agent?.id,
+  ], 160);
+  const rawParentAgentId = firstSafeLabel([
+    item.parent_agent_id, item.parentAgentId, item.sender_agent_id, item.parent?.id,
+  ], 160);
+  return {
+    toolCategory: category,
+    toolName: server && explicitName ? `${server}/${explicitName}` : explicitName || defaults[category],
+    toolStatus: normalizeToolStatus(item.status),
+    agentId: rawAgentId ? stableId(['agent', rawAgentId]).slice(0, 16) : null,
+    parentAgentId: rawParentAgentId ? stableId(['agent', rawParentAgentId]).slice(0, 16) : null,
+  };
 }
 
 function walkJsonl(root) {
@@ -145,6 +237,60 @@ function percentile(values, quantile) {
   return Math.round(sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower));
 }
 
+function ratio(numerator, denominator) {
+  return denominator > 0 ? numerator / denominator : null;
+}
+
+function average(values) {
+  const valid = values.filter(Number.isFinite);
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+}
+
+function concurrencyMetrics(turns, now = Date.now()) {
+  const intervals = turns.filter((turn) => turn.receivedAtMs && (turn.completedAtMs || turn.durationMs !== null)).map((turn) => ({
+    id: turn.turnId,
+    start: turn.receivedAtMs,
+    end: turn.completedAtMs ?? (turn.receivedAtMs + (turn.durationMs ?? Math.max(0, now - turn.receivedAtMs))),
+  })).filter((entry) => entry.end > entry.start);
+  const events = intervals.flatMap((entry) => [
+    { at: entry.start, delta: 1, id: entry.id },
+    { at: entry.end, delta: -1, id: entry.id },
+  ]).sort((left, right) => left.at - right.at || left.delta - right.delta);
+  const active = new Set();
+  const overlapped = new Set();
+  const timeline = [];
+  let peak = 0;
+  for (const event of events) {
+    if (event.delta < 0) active.delete(event.id);
+    else {
+      if (active.size) {
+        overlapped.add(event.id);
+        for (const id of active) overlapped.add(id);
+      }
+      active.add(event.id);
+    }
+    peak = Math.max(peak, active.size);
+    if (timeline.at(-1)?.at === event.at) timeline.at(-1).value = active.size;
+    else timeline.push({ at: event.at, value: active.size });
+  }
+  const sampled = timeline.length <= 240 ? timeline : timeline.filter((_, index) => index % Math.ceil(timeline.length / 240) === 0 || index === timeline.length - 1);
+  return {
+    peak,
+    current: turns.filter((turn) => turn.status === 'running').length,
+    overlappingTurns: overlapped.size,
+    parallelTurnPercent: ratio(overlapped.size, intervals.length),
+    timeline: sampled,
+  };
+}
+
+function intervalOverlapMetrics(stages) {
+  const intervals = stages.filter((stage) => stage.startedAtMs && stage.completedAtMs && stage.completedAtMs > stage.startedAtMs);
+  if (!intervals.length) return { combinedDurationMs: 0, wallClockMs: null, overlapPercent: null };
+  const combinedDurationMs = intervals.reduce((sum, stage) => sum + (stage.durationMs ?? stage.completedAtMs - stage.startedAtMs), 0);
+  const wallClockMs = Math.max(...intervals.map((stage) => stage.completedAtMs)) - Math.min(...intervals.map((stage) => stage.startedAtMs));
+  return { combinedDurationMs, wallClockMs, overlapPercent: ratio(Math.max(0, combinedDurationMs - wallClockMs), combinedDurationMs) };
+}
+
 export class TelemetryStore {
   constructor(databasePath = ':memory:') {
     this.db = new DatabaseSync(databasePath);
@@ -164,6 +310,7 @@ export class TelemetryStore {
         title TEXT,
         cwd TEXT,
         source_path TEXT,
+        dimensions_json TEXT,
         created_at_ms INTEGER,
         updated_at_ms INTEGER NOT NULL
       );
@@ -191,6 +338,7 @@ export class TelemetryStore {
         context_window INTEGER,
         compacted INTEGER NOT NULL DEFAULT 0,
         rate_limits_json TEXT,
+        dimensions_json TEXT,
         source_path TEXT,
         updated_at_ms INTEGER NOT NULL
       );
@@ -242,7 +390,16 @@ export class TelemetryStore {
         last_seen_ms INTEGER NOT NULL
       );
     `);
-    this.setSetting('schema_version', '1');
+    const previousVersion = numberOrNull(this.getSetting('schema_version')) ?? 0;
+    const threadColumns = new Set(this.db.prepare('PRAGMA table_info(threads)').all().map((row) => row.name));
+    const turnColumns = new Set(this.db.prepare('PRAGMA table_info(turns)').all().map((row) => row.name));
+    if (!threadColumns.has('dimensions_json')) this.db.exec('ALTER TABLE threads ADD COLUMN dimensions_json TEXT;');
+    if (!turnColumns.has('dimensions_json')) this.db.exec('ALTER TABLE turns ADD COLUMN dimensions_json TEXT;');
+    if (previousVersion > 0 && previousVersion < 2) {
+      this.db.exec('DELETE FROM stages; DELETE FROM usage_events; DELETE FROM turns; DELETE FROM threads; DELETE FROM source_files; DELETE FROM diagnostics;');
+      this.setSetting('session_index_mtime_ms', '0');
+    }
+    this.setSetting('schema_version', '2');
     if (this.getSetting('import_cutoff_ms') === null) this.setSetting('import_cutoff_ms', '0');
     const clearKnownDiagnostic = this.db.prepare('DELETE FROM diagnostics WHERE event_type=?');
     for (const knownType of KNOWN_PAYLOAD_TYPES) clearKnownDiagnostic.run(knownType);
@@ -270,19 +427,23 @@ export class TelemetryStore {
       source.mtimeMs ?? 0, source.threadId, source.sessionId, source.currentTurnId, Date.now());
   }
 
-  upsertThread({ threadId, sessionId = null, title = null, cwd = null, sourcePath = null, createdAtMs = null }) {
+  upsertThread({ threadId, sessionId = null, title = null, cwd = null, sourcePath = null, dimensions = null, createdAtMs = null }) {
     if (!threadId) return;
+    const existingDimensions = parseJson(this.db.prepare('SELECT dimensions_json FROM threads WHERE thread_id=?').get(threadId)?.dimensions_json, {});
+    const mergedDimensions = { ...existingDimensions, ...Object.fromEntries(Object.entries(dimensions ?? {}).filter(([, value]) => value !== null && value !== undefined)) };
     this.db.prepare(`
-      INSERT INTO threads(thread_id,session_id,title,cwd,source_path,created_at_ms,updated_at_ms)
-      VALUES(?,?,?,?,?,?,?)
+      INSERT INTO threads(thread_id,session_id,title,cwd,source_path,dimensions_json,created_at_ms,updated_at_ms)
+      VALUES(?,?,?,?,?,?,?,?)
       ON CONFLICT(thread_id) DO UPDATE SET
         session_id=COALESCE(excluded.session_id,threads.session_id),
         title=COALESCE(excluded.title,threads.title),
         cwd=COALESCE(excluded.cwd,threads.cwd),
         source_path=COALESCE(excluded.source_path,threads.source_path),
+        dimensions_json=COALESCE(excluded.dimensions_json,threads.dimensions_json),
         created_at_ms=COALESCE(threads.created_at_ms,excluded.created_at_ms),
         updated_at_ms=excluded.updated_at_ms
-    `).run(threadId, sessionId, title, cwd, sourcePath, createdAtMs, Date.now());
+    `).run(threadId, sessionId, title, cwd, sourcePath,
+      Object.keys(mergedDimensions).length ? safeJson(mergedDimensions) : null, createdAtMs, Date.now());
   }
 
   ensureTurn({ turnId, threadId, sourcePath = null, receivedAtMs = null, status = 'running' }) {
@@ -308,6 +469,13 @@ export class TelemetryStore {
       ['assistantExcerpt', 'assistant_excerpt'], ['compacted', 'compacted'],
     ]);
     const entries = Object.entries(fields).filter(([key, value]) => allowed.has(key) && value !== undefined);
+    if (fields.dimensions) {
+      const existing = parseJson(this.db.prepare('SELECT dimensions_json FROM turns WHERE turn_id=?').get(turnId)?.dimensions_json, {});
+      const merged = { ...existing, ...Object.fromEntries(Object.entries(fields.dimensions).filter(([, value]) => value !== null && value !== undefined)) };
+      if (Object.keys(merged).length) {
+        this.db.prepare('UPDATE turns SET dimensions_json=?,updated_at_ms=? WHERE turn_id=?').run(safeJson(merged), Date.now(), turnId);
+      }
+    }
     if (!entries.length) return;
     const assignments = entries.map(([key]) => `${allowed.get(key)} = ?`);
     const values = entries.map(([, value]) => value);
@@ -323,7 +491,7 @@ export class TelemetryStore {
   addStage(turnId, item, startedAtMs, completedAtMs) {
     const kind = classifyItem(item);
     const stageId = stableId([turnId, item?.id, item?.type, item?.phase, startedAtMs, completedAtMs]);
-    const metadata = safeJson({ phase: item?.phase ?? null, rawType: item?.type ?? 'Unknown' });
+    const metadata = safeJson({ phase: item?.phase ?? null, rawType: item?.type ?? 'Unknown', ...extractToolMetadata(item) });
     const result = this.db.prepare(`
       INSERT OR IGNORE INTO stages(stage_id,turn_id,kind,raw_type,status,started_at_ms,completed_at_ms,duration_ms,metadata_json)
       VALUES(?,?,?,?,?,?,?,?,?)
@@ -435,12 +603,13 @@ export class TelemetryStore {
 
   turnRows() {
     return this.db.prepare(`
-      SELECT t.*, th.title, th.cwd, th.session_id FROM turns t
+      SELECT t.*, th.title, th.cwd, th.session_id, th.dimensions_json AS thread_dimensions_json FROM turns t
       LEFT JOIN threads th ON th.thread_id=t.thread_id ORDER BY t.received_at_ms DESC
     `).all().map((row) => this.mapTurn(row));
   }
 
   mapTurn(row, includeDetails = false) {
+    const dimensions = { ...parseJson(row.thread_dimensions_json, {}), ...parseJson(row.dimensions_json, {}) };
     const turn = {
       turnId: row.turn_id, threadId: row.thread_id, sessionId: row.session_id,
       title: row.title || '未命名任务', cwd: row.cwd, project: row.cwd ? basename(row.cwd) : '未知项目',
@@ -460,9 +629,24 @@ export class TelemetryStore {
         compacted: Boolean(row.compacted),
       },
       rateLimits: parseJson(row.rate_limits_json),
+      dimensions: {
+        speed: dimensions.speed ?? null,
+        reasoningMode: dimensions.reasoningMode ?? null,
+        reasoningContext: dimensions.reasoningContext ?? null,
+        executionMode: dimensions.executionMode ?? null,
+        origin: dimensions.origin ?? null,
+        automationKind: dimensions.automationKind ?? null,
+      },
     };
     const stages = this.stageRows(turn.turnId);
     turn.stageDurations = allocateDurations(turn, stages);
+    const toolStages = stages.filter((stage) => stage.kind === 'tool');
+    turn.toolSummary = {
+      calls: toolStages.length,
+      failures: toolStages.filter((stage) => stage.metadata.toolStatus === 'failure').length,
+      durationMs: toolStages.reduce((sum, stage) => sum + (stage.durationMs ?? 0), 0),
+      categories: [...new Set(toolStages.map((stage) => stage.metadata.toolCategory).filter(Boolean))],
+    };
     if (turn.ttftMs === null && turn.receivedAtMs) {
       const first = stages.find((stage) => stage.kind !== 'input' && stage.startedAtMs);
       if (first) { turn.ttftMs = Math.max(0, first.startedAtMs - turn.receivedAtMs); turn.ttftProvisional = true; }
@@ -484,7 +668,9 @@ export class TelemetryStore {
       if (threshold && (turn.receivedAtMs ?? 0) < threshold) return false;
       if (filters.project && turn.cwd !== filters.project) return false;
       if (filters.model && turn.model !== filters.model) return false;
+      if (filters.effort && (turn.effort || '') !== filters.effort) return false;
       if (filters.status && turn.status !== filters.status) return false;
+      if (filters.mode && (turn.dimensions.executionMode || '') !== filters.mode) return false;
       if (filters.threadId && turn.threadId !== filters.threadId) return false;
       return true;
     });
@@ -523,9 +709,160 @@ export class TelemetryStore {
       filters: {
         projects: [...new Map(filtersData.filter((turn) => turn.cwd).map((turn) => [turn.cwd, { value: turn.cwd, label: turn.project }])).values()],
         models: [...new Set(filtersData.map((turn) => turn.model))].sort(),
+        efforts: [...new Set(filtersData.map((turn) => turn.effort).filter(Boolean))].sort(),
         statuses: [...new Set(filtersData.map((turn) => turn.status))].sort(),
+        modes: [...new Set(filtersData.map((turn) => turn.dimensions.executionMode).filter(Boolean))].sort(),
       },
       diagnostics: this.diagnosticRows().slice(0, 20),
+    };
+  }
+
+  analytics(filters = {}) {
+    const turns = this.filteredTurns(filters);
+    const completed = turns.filter((turn) => turn.status === 'completed');
+    const timedCompleted = completed.filter((turn) => Number.isFinite(turn.durationMs));
+    const terminal = turns.filter((turn) => ['completed', 'aborted', 'incomplete'].includes(turn.status));
+    const allStages = turns.flatMap((turn) => this.stageRows(turn.turnId).map((stage) => ({ ...stage, turnId: turn.turnId, title: turn.title })));
+    const toolStages = allStages.filter((stage) => stage.kind === 'tool');
+    const agentStages = toolStages.filter((stage) => stage.metadata.agentId || stage.metadata.toolCategory === 'sub-agent');
+    const contextValues = turns.map((turn) => turn.context.peakPercent).filter(Number.isFinite);
+    const inputTokens = turns.reduce((sum, turn) => sum + turn.tokens.input, 0);
+    const cachedTokens = turns.reduce((sum, turn) => sum + turn.tokens.cachedInput, 0);
+    const cacheWriteTokens = turns.reduce((sum, turn) => sum + turn.tokens.cacheWriteInput, 0);
+    const outputTokens = turns.reduce((sum, turn) => sum + turn.tokens.output, 0);
+    const reasoningTokens = turns.reduce((sum, turn) => sum + turn.tokens.reasoningOutput, 0);
+    const concurrency = concurrencyMetrics(turns);
+
+    const efficiencyGroups = new Map();
+    for (const turn of turns) {
+      const effort = turn.effort || 'unknown';
+      const key = `${turn.model}\u0000${effort}`;
+      if (!efficiencyGroups.has(key)) efficiencyGroups.set(key, { model: turn.model, effort, turns: [] });
+      efficiencyGroups.get(key).turns.push(turn);
+    }
+    const matrix = [...efficiencyGroups.values()].map((group) => {
+      const groupCompleted = group.turns.filter((turn) => turn.status === 'completed');
+      const groupTimedCompleted = groupCompleted.filter((turn) => Number.isFinite(turn.durationMs));
+      const groupTerminal = group.turns.filter((turn) => ['completed', 'aborted', 'incomplete'].includes(turn.status));
+      const groupInput = group.turns.reduce((sum, turn) => sum + turn.tokens.input, 0);
+      const groupOutput = group.turns.reduce((sum, turn) => sum + turn.tokens.output, 0);
+      return {
+        model: group.model, effort: group.effort, turns: group.turns.length, completed: groupCompleted.length,
+        completionRate: ratio(groupCompleted.length, groupTerminal.length),
+        durationP50: percentile(groupTimedCompleted.map((turn) => turn.durationMs), 0.5),
+        durationP95: percentile(groupTimedCompleted.map((turn) => turn.durationMs), 0.95),
+        ttftP50: percentile(groupTimedCompleted.map((turn) => turn.ttftMs).filter(Number.isFinite), 0.5),
+        averageTokens: average(group.turns.map((turn) => turn.tokens.total)),
+        cacheHitRate: ratio(group.turns.reduce((sum, turn) => sum + turn.tokens.cachedInput, 0), groupInput),
+        reasoningShare: ratio(group.turns.reduce((sum, turn) => sum + turn.tokens.reasoningOutput, 0), groupOutput),
+      };
+    }).sort((left, right) => right.turns - left.turns || left.model.localeCompare(right.model));
+
+    const toolGroups = new Map();
+    for (const stage of toolStages) {
+      const category = stage.metadata.toolCategory || 'unknown';
+      const name = stage.metadata.toolName || 'Unknown tool';
+      const key = `${category}\u0000${name}`;
+      if (!toolGroups.has(key)) toolGroups.set(key, { category, name, stages: [] });
+      toolGroups.get(key).stages.push(stage);
+    }
+    const tools = [...toolGroups.values()].map((group) => {
+      const outcomes = group.stages.map((stage) => stage.metadata.toolStatus).filter((status) => ['success', 'failure'].includes(status));
+      const failures = outcomes.filter((status) => status === 'failure').length;
+      const durations = group.stages.map((stage) => stage.durationMs).filter(Number.isFinite);
+      return {
+        category: group.category, name: group.name, calls: group.stages.length, failures,
+        failureRate: ratio(failures, outcomes.length), totalDurationMs: durations.reduce((sum, value) => sum + value, 0),
+        durationP95: percentile(durations, 0.95),
+      };
+    }).sort((left, right) => right.calls - left.calls || right.totalDurationMs - left.totalDurationMs);
+    const toolOutcomes = toolStages.map((stage) => stage.metadata.toolStatus).filter((status) => ['success', 'failure'].includes(status));
+    const toolFailures = toolOutcomes.filter((status) => status === 'failure').length;
+
+    const agentIds = new Set(agentStages.map((stage) => stage.metadata.agentId).filter(Boolean));
+    const relations = [...new Map(agentStages.filter((stage) => stage.metadata.agentId).map((stage) => [
+      `${stage.metadata.parentAgentId || ''}:${stage.metadata.agentId}`,
+      { parentAgentId: stage.metadata.parentAgentId || null, agentId: stage.metadata.agentId },
+    ])).values()];
+    const agentOverlap = intervalOverlapMetrics(agentStages);
+
+    const modeGroups = new Map();
+    const automationGroups = new Map();
+    for (const turn of turns) {
+      const mode = turn.dimensions.executionMode || 'unknown';
+      modeGroups.set(mode, (modeGroups.get(mode) || 0) + 1);
+      if (turn.dimensions.automationKind) automationGroups.set(turn.dimensions.automationKind, (automationGroups.get(turn.dimensions.automationKind) || 0) + 1);
+    }
+
+    const compactStages = allStages.filter((stage) => stage.kind === 'compaction');
+    return {
+      generatedAtMs: Date.now(),
+      coverage: {
+        toolStages: toolStages.length > 0,
+        toolNames: toolStages.some((stage) => Boolean(stage.metadata.toolName)),
+        toolStatuses: toolStages.some((stage) => ['success', 'failure'].includes(stage.metadata.toolStatus)),
+        agents: agentStages.some((stage) => Boolean(stage.metadata.agentId)),
+        workModes: turns.some((turn) => Boolean(turn.dimensions.executionMode)),
+        automations: turns.some((turn) => Boolean(turn.dimensions.automationKind)),
+        speed: turns.some((turn) => Boolean(turn.dimensions.speed)),
+        reasoningMode: turns.some((turn) => Boolean(turn.dimensions.reasoningMode)),
+      },
+      overview: {
+        turns: turns.length, completed: completed.length, running: turns.filter((turn) => turn.status === 'running').length,
+        completionRate: ratio(completed.length, terminal.length),
+        durationP50: percentile(timedCompleted.map((turn) => turn.durationMs), 0.5),
+        durationP95: percentile(timedCompleted.map((turn) => turn.durationMs), 0.95),
+        ttftP50: percentile(timedCompleted.map((turn) => turn.ttftMs).filter(Number.isFinite), 0.5),
+        totalTokens: turns.reduce((sum, turn) => sum + turn.tokens.total, 0),
+        cacheHitRate: ratio(cachedTokens, inputTokens), reasoningShare: ratio(reasoningTokens, outputTokens),
+        contextWarning: contextValues.filter((value) => value >= 70 && value < 85).length,
+        contextDanger: contextValues.filter((value) => value >= 85).length,
+        compactions: compactStages.length, currentConcurrency: concurrency.current, peakConcurrency: concurrency.peak,
+      },
+      efficiency: { matrix },
+      cache: {
+        inputTokens, cachedInputTokens: cachedTokens, cacheWriteInputTokens: cacheWriteTokens,
+        hitRate: ratio(cachedTokens, inputTokens), writeRate: ratio(cacheWriteTokens, inputTokens),
+        trend: turns.slice(0, 120).reverse().map((turn) => ({
+          turnId: turn.turnId, title: turn.title, receivedAtMs: turn.receivedAtMs,
+          inputTokens: turn.tokens.input, cachedInputTokens: turn.tokens.cachedInput,
+          cacheWriteInputTokens: turn.tokens.cacheWriteInput,
+        })),
+      },
+      tools: {
+        calls: toolStages.length, failures: toolFailures, failureRate: ratio(toolFailures, toolOutcomes.length),
+        totalDurationMs: toolStages.reduce((sum, stage) => sum + (stage.durationMs ?? 0), 0), groups: tools,
+      },
+      agents: {
+        count: agentIds.size, calls: agentStages.length, relations, ...agentOverlap,
+        timeline: agentStages.slice(-120).map((stage) => ({
+          turnId: stage.turnId, title: stage.title, agentId: stage.metadata.agentId || null,
+          parentAgentId: stage.metadata.parentAgentId || null, startedAtMs: stage.startedAtMs,
+          completedAtMs: stage.completedAtMs, durationMs: stage.durationMs, status: stage.metadata.toolStatus || 'unknown',
+        })),
+      },
+      context: {
+        peakP50: percentile(contextValues, 0.5), peakP95: percentile(contextValues, 0.95),
+        warning: contextValues.filter((value) => value >= 70 && value < 85).length,
+        danger: contextValues.filter((value) => value >= 85).length,
+        compactions: compactStages.length,
+        compactionDurationMs: compactStages.reduce((sum, stage) => sum + (stage.durationMs ?? 0), 0),
+        trend: turns.slice(0, 120).reverse().map((turn) => ({
+          turnId: turn.turnId, title: turn.title, receivedAtMs: turn.receivedAtMs,
+          latestPercent: turn.context.latestPercent, peakPercent: turn.context.peakPercent, compacted: turn.context.compacted,
+        })),
+      },
+      reliability: {
+        completed: completed.length, aborted: turns.filter((turn) => turn.status === 'aborted').length,
+        incomplete: turns.filter((turn) => turn.status === 'incomplete').length,
+        running: turns.filter((turn) => turn.status === 'running').length,
+        completionRate: ratio(completed.length, terminal.length), toolFailures,
+      },
+      concurrency,
+      workModes: {
+        modes: [...modeGroups].map(([mode, count]) => ({ mode, count })).sort((left, right) => right.count - left.count),
+        automations: [...automationGroups].map(([kind, count]) => ({ kind, count })).sort((left, right) => right.count - left.count),
+      },
     };
   }
 
@@ -541,12 +878,17 @@ export class TelemetryStore {
       lastActivityMs: Math.max(...task.turns.map((turn) => turn.receivedAtMs ?? 0)),
       totalTokens: task.turns.reduce((sum, turn) => sum + turn.tokens.total, 0),
       totalDurationMs: task.turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0),
+      completionRate: ratio(task.turns.filter((turn) => turn.status === 'completed').length,
+        task.turns.filter((turn) => ['completed', 'aborted', 'incomplete'].includes(turn.status)).length),
+      toolCalls: task.turns.reduce((sum, turn) => sum + turn.toolSummary.calls, 0),
+      toolFailures: task.turns.reduce((sum, turn) => sum + turn.toolSummary.failures, 0),
+      modes: [...new Set(task.turns.map((turn) => turn.dimensions.executionMode).filter(Boolean))],
     })).sort((a, b) => b.lastActivityMs - a.lastActivityMs);
   }
 
-  taskTurns(threadId) {
-    return this.filteredTurns({ threadId }).map((turn) => {
-      const row = this.db.prepare(`SELECT t.*,th.title,th.cwd,th.session_id FROM turns t LEFT JOIN threads th ON th.thread_id=t.thread_id WHERE t.turn_id=?`).get(turn.turnId);
+  taskTurns(threadId, filters = {}) {
+    return this.filteredTurns({ ...filters, threadId }).map((turn) => {
+      const row = this.db.prepare(`SELECT t.*,th.title,th.cwd,th.session_id,th.dimensions_json AS thread_dimensions_json FROM turns t LEFT JOIN threads th ON th.thread_id=t.thread_id WHERE t.turn_id=?`).get(turn.turnId);
       return this.mapTurn(row, true);
     });
   }
@@ -659,6 +1001,7 @@ export class TelemetryCollector extends EventEmitter {
       source.sessionId = payload.session_id || payload.id || source.sessionId;
       this.store.upsertThread({
         threadId, sessionId: source.sessionId, cwd: payload.cwd ?? null, sourcePath: source.sourcePath,
+        dimensions: extractDimensions(payload),
         createdAtMs: toEpochMs(payload.timestamp) ?? timestampMs,
       });
       return true;
@@ -670,7 +1013,11 @@ export class TelemetryCollector extends EventEmitter {
       if (threadId) this.store.upsertThread({ threadId, cwd: payload.cwd ?? null, sourcePath: source.sourcePath });
       if (turnId && timestampMs >= cutoff) {
         this.store.ensureTurn({ turnId, threadId, sourcePath: source.sourcePath });
-        this.store.updateTurn(turnId, { model: payload.model ?? null, effort: payload.effort ?? null });
+        this.store.updateTurn(turnId, {
+          model: payload.model ?? null,
+          effort: payload.effort ?? null,
+          dimensions: extractDimensions(payload),
+        });
       }
       return true;
     }
@@ -682,6 +1029,19 @@ export class TelemetryCollector extends EventEmitter {
       source.currentTurnId = payload.turn_id;
       const threadId = payload.thread_id || source.threadId || payload.turn_id;
       this.store.ensureTurn({ turnId: payload.turn_id, threadId, sourcePath: source.sourcePath, receivedAtMs: toEpochMs(payload.started_at) ?? timestampMs });
+      this.store.updateTurn(payload.turn_id, { dimensions: extractDimensions(payload) });
+      return true;
+    }
+    if (type === 'thread_settings_applied') {
+      const turnId = payload.turn_id || source.currentTurnId;
+      if (!turnId) return false;
+      const threadId = payload.thread_id || source.threadId || turnId;
+      this.store.ensureTurn({ turnId, threadId, sourcePath: source.sourcePath });
+      this.store.updateTurn(turnId, {
+        model: payload.model ?? undefined,
+        effort: payload.effort ?? payload.reasoning_effort ?? undefined,
+        dimensions: extractDimensions(payload),
+      });
       return true;
     }
     if (type === 'item_completed') {

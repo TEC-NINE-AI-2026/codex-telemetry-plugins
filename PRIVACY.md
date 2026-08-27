@@ -1,6 +1,6 @@
 # Privacy
 
-Codex Telemetry Dashboard is a local-only utility. It does not include remote analytics, telemetry upload, advertising, or an external account connection.
+Codex Efficiency and Health Analytics Dashboard is a local-only utility. It does not include remote analytics, telemetry upload, advertising, or an external account connection.
 
 ## Data read
 
@@ -11,10 +11,12 @@ It may process and store:
 - task and session identifiers;
 - task titles and working-directory paths;
 - model and reasoning-effort labels;
-- timing, stage, token, context-window, compaction, and subscription-limit metadata;
+- allowlisted speed, reasoning mode, execution mode, origin, and automation-kind labels when present;
+- timing, stage, token, cache, context-window, compaction, concurrency, and subscription-limit metadata;
+- safe tool category/name labels, normalized status values, and hashed agent relationships;
 - truncated user-message and final-answer excerpts used by the local dashboard.
 
-It is designed not to store authentication files, reasoning text, tool commands, tool arguments, tool outputs, or unknown event payload content.
+It is designed not to store authentication files, reasoning text, tool commands, tool arguments, tool outputs, error bodies, raw agent identifiers, or unknown event payload content.
 
 ## Data stored
 

@@ -7,12 +7,14 @@ const accessToken = sessionStorage.getItem('codexTelemetryToken');
 
 const state = {
   summary: null,
+  analytics: null,
   tasks: [],
   openTask: null,
   taskTurns: new Map(),
   loading: false,
   refreshTimer: null,
-  filters: { range: '7d', project: '', model: '', status: '' },
+  activeTab: 'overview',
+  filters: { range: '7d', project: '', model: '', effort: '', status: '', mode: '' },
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -25,8 +27,7 @@ function formatDuration(milliseconds) {
   if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
   const minutes = Math.floor(milliseconds / 60_000);
   const seconds = Math.round((milliseconds % 60_000) / 1000);
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return minutes < 60 ? `${minutes}m ${seconds}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 function formatTokens(value) {
@@ -42,8 +43,24 @@ function formatDate(value, includeDate = true) {
   }).format(new Date(value));
 }
 
+function formatPercent(value, digits = 1) {
+  return Number.isFinite(value) ? `${(value * 100).toFixed(digits)}%` : '—';
+}
+
+function formatContextPercent(value) {
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : '—';
+}
+
 function statusLabel(status) {
-  return ({ completed: '已完成', running: '运行中', aborted: '已中止', incomplete: '不完整' })[status] || status;
+  return ({ completed: '已完成', running: '运行中', aborted: '已中止', incomplete: '不完整', success: '成功', failure: '失败', cancelled: '已取消', unknown: '未知' })[status] || status;
+}
+
+function modeLabel(mode) {
+  return ({ local: '本地', worktree: 'Worktree', cloud: '云端', handoff: 'Handoff', background: '后台', automation: '自动化', unknown: 'Codex 未提供' })[mode] || mode;
+}
+
+function categoryLabel(category) {
+  return ({ shell: 'Shell', mcp: 'MCP', plugin: '插件/动态工具', 'file-change': '文件变更', image: '图片查看', 'computer-use': 'Computer Use', 'sub-agent': '子智能体', 'file-search': '文件搜索', 'web-search': '网页搜索', 'code-interpreter': '代码解释器', unknown: '未知工具' })[category] || category;
 }
 
 function stageLabel(kind) {
@@ -77,9 +94,8 @@ function connection(status, text) {
 
 function showError(message) {
   const banner = $('#error-banner');
-  if (!message) { banner.classList.add('hidden'); banner.textContent = ''; return; }
-  banner.textContent = message;
-  banner.classList.remove('hidden');
+  banner.textContent = message || '';
+  banner.classList.toggle('hidden', !message);
 }
 
 async function loadDashboard({ quiet = false } = {}) {
@@ -88,8 +104,11 @@ async function loadDashboard({ quiet = false } = {}) {
   if (!quiet) connection('pending', '正在更新');
   try {
     const query = queryString();
-    const [summary, taskPayload] = await Promise.all([api(`/api/summary?${query}`), api(`/api/tasks?${query}`)]);
+    const [summary, analytics, taskPayload] = await Promise.all([
+      api(`/api/summary?${query}`), api(`/api/analytics?${query}`), api(`/api/tasks?${query}`),
+    ]);
     state.summary = summary;
+    state.analytics = analytics;
     state.tasks = taskPayload.tasks;
     render();
     connection('online', '实时连接');
@@ -113,170 +132,178 @@ function updateSelect(selector, values, placeholder) {
   if ([...select.options].some((option) => option.value === selected)) select.value = selected;
 }
 
+function renderKpis(selector, items) {
+  $(selector).innerHTML = items.map(([title, value, detail, tone = '']) => `<article class="kpi ${escapeHtml(tone)}"><p class="eyebrow">${escapeHtml(title)}</p><div class="value">${escapeHtml(value)}</div><p class="detail">${escapeHtml(detail)}</p></article>`).join('');
+}
+
+function empty(text) { return `<div class="empty-state compact">${escapeHtml(text)}</div>`; }
+
 function render() {
-  const summary = state.summary;
-  if (!summary) return;
+  const { summary, analytics } = state;
+  if (!summary || !analytics) return;
   $('#updated-at').textContent = `更新于 ${formatDate(summary.generatedAtMs)}`;
   $('#source-count').textContent = `${summary.sourceCount} 个日志源`;
   $('#import-banner').classList.toggle('hidden', !summary.importing);
   renderActive(summary.active);
   renderSubscription(summary.subscription);
-  renderKpis(summary);
-  renderLatencyChart(summary.trend);
-  renderTokenChart(summary.trend);
+  renderOverview(analytics);
+  renderEfficiency(analytics);
+  renderTools(analytics);
+  renderContext(analytics);
   renderTasks(state.tasks);
   renderDiagnostics(summary.diagnostics);
   updateSelect('#project-filter', summary.filters.projects, '全部项目');
   updateSelect('#model-filter', summary.filters.models, '全部模型');
+  updateSelect('#effort-filter', summary.filters.efforts, '全部强度');
   updateSelect('#status-filter', summary.filters.statuses.map((value) => ({ value, label: statusLabel(value) })), '全部状态');
+  updateSelect('#mode-filter', summary.filters.modes.map((value) => ({ value, label: modeLabel(value) })), '全部模式');
 }
 
 function renderActive(active) {
-  const section = $('#active-section');
-  section.classList.toggle('hidden', !active.length);
-  $('#active-turns').innerHTML = active.map((turn) => `
-    <article class="active-card" data-start="${turn.receivedAtMs || 0}">
-      <div class="task-title"><strong>${escapeHtml(turn.title)}</strong></div>
-      <div class="active-time">${formatDuration(turn.durationMs)}</div>
-      <span class="badge running">${escapeHtml(stageLabel(turn.currentStage))}</span>
-      <p class="task-path">${escapeHtml(turn.project)} · ${escapeHtml(turn.model)}</p>
-    </article>`).join('');
+  $('#active-section').classList.toggle('hidden', !active.length);
+  $('#active-turns').innerHTML = active.map((turn) => `<article class="active-card" data-start="${turn.receivedAtMs || 0}"><div class="task-title"><strong>${escapeHtml(turn.title)}</strong></div><div class="active-time">${formatDuration(turn.durationMs)}</div><span class="badge running">${escapeHtml(stageLabel(turn.currentStage))}</span><p class="task-path">${escapeHtml(turn.project)} · ${escapeHtml(turn.model)}</p></article>`).join('');
 }
 
 function renderSubscription(rateLimits) {
   const container = $('#subscription');
   if (!rateLimits) {
     $('#plan-type').textContent = 'Codex 未提供';
-    container.innerHTML = '<div class="empty-state compact">等待首个 usage 快照</div>';
+    container.innerHTML = empty('等待首个 usage 快照');
     return;
   }
   $('#plan-type').textContent = `${rateLimits.plan_type || '未知方案'}${rateLimits.limit_name ? ` · ${rateLimits.limit_name}` : ''}`;
-  const windows = [['primary', rateLimits.primary], ['secondary', rateLimits.secondary]].filter(([, value]) => value);
-  const windowCards = windows.map(([name, value]) => {
+  const cards = [['primary', rateLimits.primary], ['secondary', rateLimits.secondary]].filter(([, value]) => value).map(([name, value]) => {
     const percent = clamp(Number(value.used_percent) || 0, 0, 100);
-    const windowMinutes = Number(value.window_minutes);
-    const label = windowMinutes === 300 ? '5 小时窗口' : windowMinutes === 10080 ? '7 天窗口' : `${formatDuration(windowMinutes * 60_000)}窗口`;
+    const minutes = Number(value.window_minutes);
+    const label = minutes === 300 ? '5 小时窗口' : minutes === 10080 ? '7 天窗口' : `${formatDuration(minutes * 60_000)}窗口`;
     const reset = value.resets_at ? toMs(value.resets_at) : null;
-    return `<article class="subscription-card">
-      <p class="eyebrow">${escapeHtml(name.toUpperCase())}</p>
-      <div class="value-row"><h3>${escapeHtml(label)}</h3><strong>${percent.toFixed(0)}%</strong></div>
-      <progress max="100" value="${percent}" aria-label="${escapeHtml(label)}已使用 ${percent}%"></progress>
-      <p class="muted">${reset ? `重置于 ${formatDate(reset)}` : '重置时间未提供'}</p>
-    </article>`;
+    return `<article class="subscription-card"><p class="eyebrow">${escapeHtml(name.toUpperCase())}</p><div class="value-row"><h3>${escapeHtml(label)}</h3><strong>${percent.toFixed(0)}%</strong></div><progress max="100" value="${percent}"></progress><p class="muted">${reset ? `重置于 ${formatDate(reset)}` : '重置时间未提供'}</p></article>`;
   });
-  const credits = rateLimits.credits;
-  if (credits) windowCards.push(`<article class="subscription-card">
-    <p class="eyebrow">CREDITS</p><div class="value-row"><h3>额外额度</h3><strong>${escapeHtml(credits.unlimited ? '不限量' : credits.balance ?? '0')}</strong></div>
-    <p class="muted">${credits.has_credits ? '当前有可用 credits' : '当前无额外 credits'}</p>
-  </article>`);
-  container.innerHTML = windowCards.join('');
+  if (rateLimits.credits) cards.push(`<article class="subscription-card"><p class="eyebrow">CREDITS</p><div class="value-row"><h3>额外额度</h3><strong>${escapeHtml(rateLimits.credits.unlimited ? '不限量' : rateLimits.credits.balance ?? '0')}</strong></div><p class="muted">${rateLimits.credits.has_credits ? '当前有可用 credits' : '当前无额外 credits'}</p></article>`);
+  container.innerHTML = cards.join('');
 }
 
-function toMs(value) { const numeric = Number(value); return Number.isFinite(numeric) ? (numeric < 10_000_000_000 ? numeric * 1000 : numeric) : null; }
-
-function renderKpis(summary) {
-  const items = [
-    ['轮次', String(summary.counts.turns), `${summary.counts.completed} 完成 · ${summary.counts.running} 运行`],
-    ['总耗时 P50', formatDuration(summary.metrics.durationP50), `P95 ${formatDuration(summary.metrics.durationP95)}`],
-    ['首 Token P50', formatDuration(summary.metrics.ttftP50), `P95 ${formatDuration(summary.metrics.ttftP95)}`],
-    ['总 Token', formatTokens(summary.metrics.totalTokens), `输入 ${formatTokens(summary.metrics.inputTokens)} · 输出 ${formatTokens(summary.metrics.outputTokens)}`],
-  ];
-  $('#kpis').innerHTML = items.map(([label, value, detail]) => `<article class="kpi"><p class="label">${escapeHtml(label)}</p><div class="value">${escapeHtml(value)}</div><p class="detail">${escapeHtml(detail)}</p></article>`).join('');
+function toMs(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? (numeric < 10_000_000_000 ? numeric * 1000 : numeric) : null;
 }
 
-const stageKeys = ['receive', 'reasoning', 'tool', 'commentary', 'final', 'other'];
+function renderOverview(data) {
+  const value = data.overview;
+  renderKpis('#overview-kpis', [
+    ['完成率', formatPercent(value.completionRate), `${value.completed} 完成 · ${data.reliability.aborted} 中止 · ${data.reliability.incomplete} 不完整`, value.completionRate !== null && value.completionRate < .8 ? 'danger' : ''],
+    ['耗时 P50', formatDuration(value.durationP50), `P95 ${formatDuration(value.durationP95)}`],
+    ['TTFT P50', formatDuration(value.ttftP50), '首个响应阶段'],
+    ['总 Token', formatTokens(value.totalTokens), `推理占比 ${formatPercent(value.reasoningShare)}`],
+    ['缓存命中', formatPercent(value.cacheHitRate), '缓存输入 ÷ 输入 Token'],
+    ['上下文风险', String(value.contextWarning + value.contextDanger), `${value.contextWarning} 预警 · ${value.contextDanger} 危险`, value.contextDanger ? 'danger' : value.contextWarning ? 'warning' : ''],
+    ['当前并发', String(value.currentConcurrency), `峰值 ${value.peakConcurrency}`],
+    ['上下文压缩', String(value.compactions), '已识别压缩阶段'],
+  ]);
+  renderLatencyChart(state.summary.trend);
+  renderConcurrency(data.concurrency);
+  renderWorkModes(data.workModes, data.coverage);
+  renderReliability(data.reliability);
+}
+
 function renderLatencyChart(trend) {
   const container = $('#latency-chart');
-  $('#latency-legend').innerHTML = stageKeys.map((key) => `<span><i class="swatch ${key}"></i>${escapeHtml(stageLabel(key))}</span>`).join('');
-  if (!trend.length) { container.innerHTML = '<div class="chart-empty">当前筛选范围没有轮次数据</div>'; return; }
-  const width = 860; const height = 230; const pad = { left: 50, right: 10, top: 12, bottom: 28 };
-  const chartHeight = height - pad.top - pad.bottom;
-  const data = trend.slice(-60);
-  const max = Math.max(...data.map((entry) => entry.durationMs || 0), 1);
-  const gap = 2; const barWidth = Math.max(2, (width - pad.left - pad.right) / data.length - gap);
-  const grid = [0, .25, .5, .75, 1].map((ratio) => {
-    const y = pad.top + chartHeight * (1 - ratio);
-    return `<line class="chart-grid-line" x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}"/><text class="chart-axis" x="${pad.left - 7}" y="${y + 3}" text-anchor="end">${escapeHtml(formatDuration(max * ratio))}</text>`;
-  }).join('');
-  const bars = data.map((entry, index) => {
-    const x = pad.left + index * ((width - pad.left - pad.right) / data.length) + gap / 2;
-    let cursor = pad.top + chartHeight;
-    const total = Math.max(entry.durationMs || 0, 1);
-    const segments = stageKeys.map((key) => {
-      const value = entry.stageDurations?.[key] || 0;
-      const segmentHeight = chartHeight * value / max;
-      cursor -= segmentHeight;
-      return segmentHeight > 0 ? `<rect class="bar-${key}" x="${x}" y="${cursor}" width="${barWidth}" height="${Math.max(1, segmentHeight)}" rx="1"><title>${escapeHtml(`${entry.title}\n${stageLabel(key)} ${formatDuration(value)}\n总计 ${formatDuration(total)}`)}</title></rect>` : '';
-    }).join('');
-    return segments;
-  }).join('');
-  const labels = axisLabels(data, width, pad, height);
-  container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="轮次耗时阶段堆叠图">${grid}${bars}${labels}</svg>`;
+  const rows = trend.filter((entry) => Number.isFinite(entry.durationMs)).slice(-36);
+  if (!rows.length) { container.innerHTML = empty('没有完整的耗时数据'); return; }
+  const max = Math.max(...rows.map((entry) => entry.durationMs), 1);
+  const keys = ['receive', 'reasoning', 'tool', 'commentary', 'final', 'other'];
+  container.innerHTML = `<div class="timeline-bars">${rows.map((entry) => `<div class="timeline-row" title="${escapeHtml(`${entry.title} · ${formatDuration(entry.durationMs)}`)}"><span>${escapeHtml(formatDate(entry.receivedAtMs, false))}</span><div class="stacked-track" style="width:${Math.max(4, entry.durationMs / max * 100)}%">${keys.map((key) => `<i class="bar-${key}" style="width:${entry.durationMs ? (entry.stageDurations[key] || 0) / entry.durationMs * 100 : 0}%"></i>`).join('')}</div></div>`).join('')}</div>`;
+  $('#latency-legend').innerHTML = keys.map((key) => `<span><i class="swatch ${key}"></i>${escapeHtml(stageLabel(key))}</span>`).join('');
 }
 
-function axisLabels(data, width, pad, height) {
-  const candidates = [...new Set([0, Math.floor((data.length - 1) / 2), data.length - 1])];
-  return candidates.map((index) => {
-    const x = pad.left + (index + .5) * ((width - pad.left - pad.right) / data.length);
-    return `<text class="chart-axis" x="${x}" y="${height - 7}" text-anchor="middle">${escapeHtml(formatDate(data[index].receivedAtMs, true).slice(0, 11))}</text>`;
-  }).join('');
+function renderConcurrency(concurrency) {
+  $('#concurrency-summary').textContent = `峰值 ${concurrency.peak} · 重叠 ${formatPercent(concurrency.parallelTurnPercent)}`;
+  const rows = concurrency.timeline.slice(-80);
+  if (!rows.length) { $('#concurrency-chart').innerHTML = empty('没有可用的轮次区间'); return; }
+  const max = Math.max(concurrency.peak, 1);
+  $('#concurrency-chart').innerHTML = `<div class="column-chart">${rows.map((entry) => `<i style="height:${Math.max(3, entry.value / max * 100)}%" title="${escapeHtml(`${formatDate(entry.at)} · ${entry.value} 个并发任务`)}"></i>`).join('')}</div>`;
 }
 
-function renderTokenChart(trend) {
-  const container = $('#token-chart');
-  if (!trend.length) { container.innerHTML = '<div class="chart-empty">当前筛选范围没有 Token 数据</div>'; return; }
-  const width = 700; const height = 230; const pad = { left: 48, right: 28, top: 12, bottom: 28 };
-  const chartHeight = height - pad.top - pad.bottom;
-  const data = trend.slice(-60);
-  const maxTokens = Math.max(...data.map((entry) => entry.tokens || 0), 1);
-  const cell = (width - pad.left - pad.right) / data.length;
-  const barWidth = Math.max(2, cell - 2);
-  const grid = [0, .5, 1].map((ratio) => {
-    const y = pad.top + chartHeight * (1 - ratio);
-    return `<line class="chart-grid-line" x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}"/><text class="chart-axis" x="${pad.left - 6}" y="${y + 3}" text-anchor="end">${escapeHtml(formatTokens(maxTokens * ratio))}</text>`;
-  }).join('');
-  const bars = data.map((entry, index) => {
-    const x = pad.left + index * cell + 1;
-    const barHeight = chartHeight * (entry.tokens || 0) / maxTokens;
-    return `<rect class="bar-token" x="${x}" y="${pad.top + chartHeight - barHeight}" width="${barWidth}" height="${Math.max(1, barHeight)}" rx="1"><title>${escapeHtml(`${entry.title}\n${formatTokens(entry.tokens)} Token`)}</title></rect>`;
-  }).join('');
-  const points = data.map((entry, index) => {
-    const percent = clamp(entry.contextPercent || 0, 0, 100);
-    return `${pad.left + (index + .5) * cell},${pad.top + chartHeight * (1 - percent / 100)}`;
-  }).join(' ');
-  container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Token 和上下文占用趋势图">${grid}${bars}<polyline class="context-line" points="${points}" fill="none"/>${axisLabels(data, width, pad, height)}<text class="chart-axis" x="${width - 2}" y="${pad.top + 3}" text-anchor="end">100%</text></svg>`;
+function renderBarList(rows, key, label) {
+  if (!rows.length) return empty('Codex 未提供');
+  const max = Math.max(...rows.map((entry) => entry[key]), 1);
+  return `<div class="bar-list">${rows.map((entry) => `<div class="bar-list-row"><span>${escapeHtml(label(entry))}</span><div><i style="width:${entry[key] / max * 100}%"></i></div><strong>${escapeHtml(entry[key])}</strong></div>`).join('')}</div>`;
+}
+
+function renderWorkModes(workModes, coverage) {
+  $('#work-modes').innerHTML = renderBarList(workModes.modes, 'count', (entry) => modeLabel(entry.mode));
+  if (!coverage.workModes) $('#work-modes').innerHTML += '<p class="coverage-note">当前日志没有明确工作模式字段，数据归入“Codex 未提供”，未根据标题或目录猜测。</p>';
+  if (workModes.automations.length) $('#work-modes').innerHTML += `<h3 class="subheading">自动化类型</h3>${renderBarList(workModes.automations, 'count', (entry) => entry.kind)}`;
+  else $('#work-modes').innerHTML += '<div class="empty-state compact spaced">Codex 未提供自动化元数据</div>';
+}
+
+function renderReliability(value) {
+  const total = value.completed + value.aborted + value.incomplete;
+  $('#reliability').innerHTML = `<div class="health-ring" style="--value:${(value.completionRate || 0) * 360}deg"><div><strong>${formatPercent(value.completionRate, 0)}</strong><span>完成率</span></div></div><div class="reliability-grid"><span><strong>${value.completed}</strong>已完成</span><span><strong>${value.aborted}</strong>已中止</span><span><strong>${value.incomplete}</strong>不完整</span><span><strong>${value.toolFailures}</strong>工具失败</span></div>${total ? '' : empty('没有终态轮次')}`;
+}
+
+function renderEfficiency(data) {
+  renderKpis('#efficiency-kpis', [
+    ['模型组合', String(data.efficiency.matrix.length), '模型 × 推理强度'],
+    ['缓存输入', formatTokens(data.cache.cachedInputTokens), `命中率 ${formatPercent(data.cache.hitRate)}`],
+    ['缓存写入', formatTokens(data.cache.cacheWriteInputTokens), `占输入 ${formatPercent(data.cache.writeRate)}`],
+    ['推理占比', formatPercent(data.overview.reasoningShare), '推理输出 ÷ 输出 Token'],
+  ]);
+  const matrix = data.efficiency.matrix;
+  $('#efficiency-matrix').innerHTML = matrix.length ? `<div class="table-scroll"><table class="event-table"><thead><tr><th>模型</th><th>推理强度</th><th>轮次</th><th>完成率</th><th>P50</th><th>P95</th><th>TTFT P50</th><th>平均 Token</th><th>缓存命中</th><th>推理占比</th></tr></thead><tbody>${matrix.map((row) => `<tr><td><strong>${escapeHtml(row.model)}</strong></td><td>${escapeHtml(row.effort === 'unknown' ? 'Codex 未提供' : row.effort)}</td><td>${row.turns}</td><td>${formatPercent(row.completionRate)}</td><td>${formatDuration(row.durationP50)}</td><td>${formatDuration(row.durationP95)}</td><td>${formatDuration(row.ttftP50)}</td><td>${formatTokens(row.averageTokens)}</td><td>${formatPercent(row.cacheHitRate)}</td><td>${formatPercent(row.reasoningShare)}</td></tr>`).join('')}</tbody></table></div>` : empty('没有可比较的模型数据');
+  const trend = data.cache.trend.slice(-48);
+  const max = Math.max(...trend.map((entry) => entry.inputTokens + entry.cacheWriteInputTokens), 1);
+  $('#cache-chart').innerHTML = trend.length ? `<div class="column-chart cache">${trend.map((entry) => {
+    const cached = Math.min(entry.cachedInputTokens, entry.inputTokens);
+    const uncached = Math.max(0, entry.inputTokens - cached);
+    return `<div style="height:${Math.max(3, (entry.inputTokens + entry.cacheWriteInputTokens) / max * 100)}%" title="${escapeHtml(`${entry.title} · 缓存 ${formatTokens(cached)} · 未缓存 ${formatTokens(uncached)} · 写入 ${formatTokens(entry.cacheWriteInputTokens)}`)}"><i class="uncached" style="height:${entry.inputTokens ? uncached / (entry.inputTokens + entry.cacheWriteInputTokens) * 100 : 0}%"></i><i class="cached" style="height:${entry.inputTokens ? cached / (entry.inputTokens + entry.cacheWriteInputTokens) * 100 : 0}%"></i><i class="write" style="height:${entry.cacheWriteInputTokens / Math.max(1, entry.inputTokens + entry.cacheWriteInputTokens) * 100}%"></i></div>`;
+  }).join('')}</div><div class="legend"><span><i class="swatch uncached"></i>未缓存输入</span><span><i class="swatch cached"></i>缓存输入</span><span><i class="swatch write"></i>缓存写入</span></div>` : empty('没有缓存 Token 数据');
+  $('#cache-summary').innerHTML = `<div class="metric-stack"><div><span>输入 Token</span><strong>${formatTokens(data.cache.inputTokens)}</strong></div><div><span>缓存输入</span><strong>${formatTokens(data.cache.cachedInputTokens)}</strong></div><div><span>缓存写入</span><strong>${formatTokens(data.cache.cacheWriteInputTokens)}</strong></div><div><span>命中率</span><strong>${formatPercent(data.cache.hitRate)}</strong></div></div>`;
+}
+
+function renderTools(data) {
+  const tools = data.tools;
+  renderKpis('#tool-kpis', [
+    ['工具调用', String(tools.calls), `${tools.groups.length} 个工具`],
+    ['累计工具时长', formatDuration(tools.totalDurationMs), '可能包含并行重叠'],
+    ['工具失败', String(tools.failures), `失败率 ${formatPercent(tools.failureRate)}`, tools.failures ? 'danger' : ''],
+    ['子智能体', String(data.agents.count), `${data.agents.calls} 个活动阶段`],
+  ]);
+  $('#tool-table').innerHTML = tools.groups.length ? `<div class="table-scroll"><table class="event-table"><thead><tr><th>类别</th><th>工具</th><th>调用</th><th>累计耗时</th><th>P95</th><th>失败</th><th>失败率</th></tr></thead><tbody>${tools.groups.map((row) => `<tr><td>${escapeHtml(categoryLabel(row.category))}</td><td><strong>${escapeHtml(row.name)}</strong></td><td>${row.calls}</td><td>${formatDuration(row.totalDurationMs)}</td><td>${formatDuration(row.durationP95)}</td><td>${row.failures}</td><td>${formatPercent(row.failureRate)}</td></tr>`).join('')}</tbody></table></div>` : empty('没有工具阶段数据');
+  if (!data.coverage.agents) {
+    $('#agent-health').innerHTML = empty('Codex 未提供可关联的智能体标识；不会根据任务标题推测父子关系。');
+    return;
+  }
+  const agent = data.agents;
+  $('#agent-health').innerHTML = `<div class="detail-grid"><div class="detail-tile"><span>匿名智能体</span><strong>${agent.count}</strong></div><div class="detail-tile"><span>活动阶段</span><strong>${agent.calls}</strong></div><div class="detail-tile"><span>累计耗时</span><strong>${formatDuration(agent.combinedDurationMs)}</strong></div><div class="detail-tile"><span>墙钟跨度</span><strong>${formatDuration(agent.wallClockMs)}</strong></div><div class="detail-tile"><span>并行重叠率</span><strong>${formatPercent(agent.overlapPercent)}</strong></div><div class="detail-tile"><span>父子关系</span><strong>${agent.relations.length}</strong></div></div>${agent.timeline.length ? `<div class="table-scroll"><table class="event-table"><thead><tr><th>任务</th><th>智能体</th><th>父智能体</th><th>开始</th><th>耗时</th><th>状态</th></tr></thead><tbody>${agent.timeline.map((row) => `<tr><td>${escapeHtml(row.title)}</td><td>${escapeHtml(row.agentId || '—')}</td><td>${escapeHtml(row.parentAgentId || '—')}</td><td>${formatDate(row.startedAtMs)}</td><td>${formatDuration(row.durationMs)}</td><td>${escapeHtml(statusLabel(row.status))}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+}
+
+function renderContext(data) {
+  const context = data.context;
+  renderKpis('#context-kpis', [
+    ['峰值 P50', formatContextPercent(context.peakP50), '轮次上下文峰值'],
+    ['峰值 P95', formatContextPercent(context.peakP95), '轮次上下文峰值'],
+    ['预警轮次', String(context.warning), '70%–84.9%', context.warning ? 'warning' : ''],
+    ['危险轮次', String(context.danger), '≥ 85%', context.danger ? 'danger' : ''],
+    ['压缩次数', String(context.compactions), `累计 ${formatDuration(context.compactionDurationMs)}`],
+  ]);
+  const trend = context.trend.filter((entry) => Number.isFinite(entry.peakPercent)).slice(-80);
+  $('#context-chart').innerHTML = trend.length ? `<div class="column-chart context">${trend.map((entry) => `<i class="${entry.peakPercent >= 85 ? 'danger' : entry.peakPercent >= 70 ? 'warning' : ''}" style="height:${Math.max(3, clamp(entry.peakPercent, 0, 100))}%" title="${escapeHtml(`${entry.title} · 峰值 ${entry.peakPercent.toFixed(1)}%${entry.compacted ? ' · 已压缩' : ''}`)}"></i>`).join('')}</div><div class="threshold-labels"><span>70% 预警</span><span>85% 危险</span></div>` : empty('Codex 未提供上下文窗口数据');
+  $('#compaction-summary').innerHTML = context.compactions ? `<div class="metric-stack"><div><span>压缩次数</span><strong>${context.compactions}</strong></div><div><span>累计压缩耗时</span><strong>${formatDuration(context.compactionDurationMs)}</strong></div><div><span>平均压缩耗时</span><strong>${formatDuration(context.compactionDurationMs / context.compactions)}</strong></div></div>` : empty('没有识别到上下文压缩阶段');
 }
 
 function renderTasks(tasks) {
   $('#task-count').textContent = `${tasks.length} 个任务`;
-  const container = $('#task-list');
-  if (!tasks.length) { container.innerHTML = '<div class="empty-state">当前筛选范围没有任务</div>'; return; }
-  container.innerHTML = tasks.map((task) => {
+  $('#task-list').innerHTML = tasks.length ? tasks.map((task) => {
     const open = state.openTask === task.threadId;
-    return `<article class="task-card ${open ? 'open' : ''}" data-thread="${escapeHtml(task.threadId)}">
-      <button class="task-summary" type="button" data-action="toggle-task" data-thread="${escapeHtml(task.threadId)}">
-        <div><h3 class="task-title">${escapeHtml(task.title)}</h3><p class="task-path" title="${escapeHtml(task.cwd || '')}">${escapeHtml(task.project)} · ${escapeHtml(task.cwd || '路径未知')}</p></div>
-        <div class="metric-mini"><strong>${task.turns.length}</strong>轮次</div>
-        <div class="metric-mini hide-small"><strong>${escapeHtml(formatDuration(task.totalDurationMs))}</strong>总耗时</div>
-        <div class="metric-mini hide-medium"><strong>${escapeHtml(formatTokens(task.totalTokens))}</strong>Token</div>
-        <span class="chevron">›</span>
-      </button>
-      ${open ? `<div class="turns" id="turns-${escapeHtml(task.threadId)}">${renderTurnRows(state.taskTurns.get(task.threadId))}</div>` : ''}
-    </article>`;
-  }).join('');
+    return `<article class="task-card ${open ? 'open' : ''}"><button class="task-summary" type="button" data-action="toggle-task" data-thread="${escapeHtml(task.threadId)}"><div><h3 class="task-title">${escapeHtml(task.title)}</h3><p class="task-path" title="${escapeHtml(task.cwd || '')}">${escapeHtml(task.project)} · ${escapeHtml(task.modes.length ? task.modes.map(modeLabel).join(' / ') : '工作模式未知')}</p></div><div class="metric-mini"><strong>${task.turns.length}</strong>轮次</div><div class="metric-mini hide-small"><strong>${formatPercent(task.completionRate)}</strong>完成率</div><div class="metric-mini hide-medium"><strong>${formatTokens(task.totalTokens)}</strong>Token</div><div class="metric-mini hide-medium"><strong>${task.toolCalls}</strong>工具 · ${task.toolFailures} 失败</div><span class="chevron">›</span></button>${open ? `<div class="turns">${renderTurnRows(state.taskTurns.get(task.threadId))}</div>` : ''}</article>`;
+  }).join('') : empty('当前筛选条件下没有任务');
 }
 
 function renderTurnRows(turns) {
-  if (!turns) return '<div class="empty-state compact">正在读取轮次明细…</div>';
-  if (!turns.length) return '<div class="empty-state compact">没有轮次</div>';
-  return turns.map((turn) => `<div class="turn-row" role="button" tabindex="0" data-action="open-turn" data-thread="${escapeHtml(turn.threadId)}" data-turn="${escapeHtml(turn.turnId)}">
-    <div><span class="badge ${escapeHtml(turn.status)}">${escapeHtml(statusLabel(turn.status))}</span><p class="task-path">${escapeHtml(formatDate(turn.receivedAtMs, false))}</p></div>
-    <div class="excerpt"><p>${escapeHtml(turn.userExcerpt || '未记录用户消息摘录')}</p><p class="answer">${escapeHtml(turn.assistantExcerpt || '尚无最终回复摘录')}</p></div>
-    <div class="metric-mini"><strong>${escapeHtml(formatDuration(turn.durationMs))}</strong>总耗时</div>
-    <div class="metric-mini hide-small"><strong>${escapeHtml(formatDuration(turn.ttftMs))}</strong>TTFT</div>
-    <div class="metric-mini hide-medium"><strong>${escapeHtml(formatTokens(turn.tokens.total))}</strong>Token</div>
-    <div class="metric-mini hide-medium"><strong>${turn.context.latestPercent === null ? '—' : `${turn.context.latestPercent.toFixed(1)}%`}</strong>上下文</div>
-  </div>`).join('');
+  if (!turns) return empty('正在载入轮次…');
+  if (!turns.length) return empty('没有轮次');
+  return turns.map((turn) => `<div class="turn-row" role="button" tabindex="0" data-action="open-turn" data-thread="${escapeHtml(turn.threadId)}" data-turn="${escapeHtml(turn.turnId)}"><div><span class="badge ${escapeHtml(turn.status)}">${escapeHtml(statusLabel(turn.status))}</span><p class="task-path">${escapeHtml(formatDate(turn.receivedAtMs, false))}</p></div><div class="excerpt"><p>${escapeHtml(turn.userExcerpt || '用户消息未提供')}</p><p class="answer">${escapeHtml(turn.assistantExcerpt || '最终回复未提供')}</p></div><div class="metric-mini"><strong>${formatDuration(turn.durationMs)}</strong>耗时</div><div class="metric-mini hide-small"><strong>${formatTokens(turn.tokens.total)}</strong>Token</div><div class="metric-mini hide-medium"><strong>${formatContextPercent(turn.context.latestPercent)}</strong>上下文</div><div class="metric-mini hide-medium"><strong>${turn.toolSummary.calls}</strong>工具</div></div>`).join('');
 }
 
 async function toggleTask(threadId) {
@@ -285,15 +312,19 @@ async function toggleTask(threadId) {
   renderTasks(state.tasks);
   if (!state.taskTurns.has(threadId)) {
     try {
-      const payload = await api(`/api/tasks/${encodeURIComponent(threadId)}/turns`);
+      const payload = await api(`/api/tasks/${encodeURIComponent(threadId)}/turns?${queryString()}`);
       state.taskTurns.set(threadId, payload.turns);
-      renderTasks(state.tasks);
-    } catch (error) { showError(`无法读取任务详情：${error.message}`); }
+    } catch (error) { showError(`无法读取任务轮次：${error.message}`); state.taskTurns.set(threadId, []); }
   }
+  renderTasks(state.tasks);
 }
 
-function openTurn(threadId, turnId) {
-  const turn = state.taskTurns.get(threadId)?.find((item) => item.turnId === turnId);
+async function openTurn(threadId, turnId) {
+  if (!state.taskTurns.has(threadId)) {
+    const payload = await api(`/api/tasks/${encodeURIComponent(threadId)}/turns?${queryString()}`);
+    state.taskTurns.set(threadId, payload.turns);
+  }
+  const turn = state.taskTurns.get(threadId)?.find((entry) => entry.turnId === turnId);
   if (!turn) return;
   $('#dialog-title').textContent = turn.title;
   $('#dialog-body').innerHTML = renderTurnDetails(turn);
@@ -303,57 +334,49 @@ function openTurn(threadId, turnId) {
 function renderTurnDetails(turn) {
   const details = [
     ['状态', statusLabel(turn.status)], ['模型', `${turn.model}${turn.effort ? ` · ${turn.effort}` : ''}`],
-    ['接收时间', formatDate(turn.receivedAtMs)], ['结束时间', formatDate(turn.completedAtMs)],
-    ['总耗时', formatDuration(turn.durationMs)], ['首 Token', `${formatDuration(turn.ttftMs)}${turn.ttftProvisional ? '（暂定）' : ''}`],
-    ['输入 Token', formatTokens(turn.tokens.input)], ['缓存输入', formatTokens(turn.tokens.cachedInput)],
-    ['输出 Token', formatTokens(turn.tokens.output)], ['推理 Token', formatTokens(turn.tokens.reasoningOutput)],
-    ['上下文', turn.context.latest ? `${formatTokens(turn.context.latest)} / ${formatTokens(turn.context.window)} (${turn.context.latestPercent?.toFixed(1)}%)` : 'Codex 未提供'],
-    ['上下文峰值', turn.context.peak ? `${formatTokens(turn.context.peak)} (${turn.context.peakPercent?.toFixed(1)}%)${turn.context.compacted ? ' · 已压缩' : ''}` : 'Codex 未提供'],
+    ['工作模式', modeLabel(turn.dimensions.executionMode || 'unknown')], ['速度', turn.dimensions.speed || 'Codex 未提供'],
+    ['推理模式', turn.dimensions.reasoningMode || 'Codex 未提供'], ['总耗时', formatDuration(turn.durationMs)],
+    ['TTFT', `${formatDuration(turn.ttftMs)}${turn.ttftProvisional ? '（估算）' : ''}`], ['总 Token', formatTokens(turn.tokens.total)],
+    ['缓存输入', formatTokens(turn.tokens.cachedInput)], ['缓存写入', formatTokens(turn.tokens.cacheWriteInput)],
+    ['推理 Token', formatTokens(turn.tokens.reasoningOutput)], ['工具调用', `${turn.toolSummary.calls} 次 · ${turn.toolSummary.failures} 失败`],
+    ['上下文', formatContextPercent(turn.context.latestPercent)], ['上下文峰值', `${formatContextPercent(turn.context.peakPercent)}${turn.context.compacted ? ' · 已压缩' : ''}`],
   ];
-  return `
-    <div class="detail-grid">${details.map(([label, value]) => `<div class="detail-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
-    <h3 class="subheading">消息摘录</h3>
-    <div class="message-box"><strong>你：</strong> ${escapeHtml(turn.userExcerpt || '未记录')}</div>
-    <div class="message-box"><strong>Codex：</strong> ${escapeHtml(turn.assistantExcerpt || '尚无最终回复')}</div>
-    <h3 class="subheading">阶段瀑布图</h3>
-    ${renderWaterfall(turn)}
-    <h3 class="subheading">原始阶段事件</h3>
-    ${renderStageTable(turn.stages)}
-    <h3 class="subheading">模型调用 Token 快照</h3>
-    ${renderUsageTable(turn.usageEvents)}
-  `;
+  return `<div class="detail-grid">${details.map(([label, value]) => `<div class="detail-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>${turn.userExcerpt ? `<h3 class="subheading">用户消息摘录</h3><div class="message-box">${escapeHtml(turn.userExcerpt)}</div>` : ''}${turn.assistantExcerpt ? `<h3 class="subheading">最终回复摘录</h3><div class="message-box">${escapeHtml(turn.assistantExcerpt)}</div>` : ''}<h3 class="subheading">阶段瀑布</h3>${renderWaterfall(turn)}<h3 class="subheading">阶段事件</h3>${renderStageTable(turn.stages)}<h3 class="subheading">Token 快照</h3>${renderUsageTable(turn.usageEvents)}`;
 }
 
 function renderWaterfall(turn) {
   const stages = turn.stages.filter((stage) => stage.startedAtMs && stage.completedAtMs);
-  const start = turn.receivedAtMs || Math.min(...stages.map((stage) => stage.startedAtMs));
-  const duration = Math.max(turn.durationMs || 0, 1);
-  const width = 860; const labelWidth = 96; const trackWidth = width - labelWidth - 8; const rowHeight = 25;
-  const rows = [];
-  if (turn.ttftMs) rows.push({ kind: 'receive', rawType: 'TimeToFirstToken', startedAtMs: start, completedAtMs: start + turn.ttftMs, durationMs: turn.ttftMs });
-  rows.push(...stages);
-  const body = rows.map((stage, index) => {
-    const x = labelWidth + clamp((stage.startedAtMs - start) / duration, 0, 1) * trackWidth;
-    const barWidth = Math.max(2, clamp((stage.completedAtMs - stage.startedAtMs) / duration, 0, 1) * trackWidth);
-    const y = 8 + index * rowHeight;
-    return `<text class="chart-axis" x="0" y="${y + 11}">${escapeHtml(stageLabel(stage.kind))}</text><rect class="waterfall-track-svg" x="${labelWidth}" y="${y}" width="${trackWidth}" height="14" rx="4"/><rect class="bar-${escapeHtml(stage.kind)}" x="${x}" y="${y}" width="${barWidth}" height="14" rx="4"><title>${escapeHtml(`${stage.rawType} · ${formatDuration(stage.durationMs)}`)}</title></rect>`;
-  }).join('');
-  return `<div class="waterfall"><svg viewBox="0 0 ${width} ${Math.max(40, rows.length * rowHeight + 12)}" role="img" aria-label="轮次阶段瀑布图">${body}</svg></div>`;
+  if (!stages.length || !turn.receivedAtMs || !turn.durationMs) return empty('没有足够的时间戳数据');
+  return `<div class="waterfall">${stages.map((stage) => {
+    const left = clamp((stage.startedAtMs - turn.receivedAtMs) / turn.durationMs * 100, 0, 100);
+    const width = clamp((stage.completedAtMs - stage.startedAtMs) / turn.durationMs * 100, .3, 100 - left);
+    return `<div class="waterfall-row"><span class="waterfall-label">${escapeHtml(stageLabel(stage.kind))}</span><div class="waterfall-track"><i class="waterfall-bar bar-${escapeHtml(stage.kind)}" style="left:${left}%;width:${width}%" title="${escapeHtml(`${stage.rawType} · ${formatDuration(stage.durationMs)}`)}"></i></div></div>`;
+  }).join('')}</div>`;
 }
 
 function renderStageTable(stages) {
-  if (!stages.length) return '<div class="empty-state compact">没有阶段事件</div>';
-  return `<div class="table-scroll"><table class="event-table"><thead><tr><th>阶段</th><th>原始类型</th><th>开始</th><th>结束</th><th>耗时</th></tr></thead><tbody>${stages.map((stage) => `<tr><td>${escapeHtml(stageLabel(stage.kind))}</td><td>${escapeHtml(stage.rawType)}</td><td>${escapeHtml(formatDate(stage.startedAtMs))}</td><td>${escapeHtml(formatDate(stage.completedAtMs))}</td><td>${escapeHtml(formatDuration(stage.durationMs))}</td></tr>`).join('')}</tbody></table></div>`;
+  if (!stages.length) return empty('没有阶段事件');
+  return `<div class="table-scroll"><table class="event-table"><thead><tr><th>阶段</th><th>原始类型</th><th>安全工具信息</th><th>状态</th><th>开始</th><th>耗时</th></tr></thead><tbody>${stages.map((stage) => `<tr><td>${escapeHtml(stageLabel(stage.kind))}</td><td>${escapeHtml(stage.rawType)}</td><td>${escapeHtml(stage.metadata.toolName || '—')}</td><td>${escapeHtml(statusLabel(stage.metadata.toolStatus || stage.status || 'unknown'))}</td><td>${escapeHtml(formatDate(stage.startedAtMs))}</td><td>${escapeHtml(formatDuration(stage.durationMs))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function renderUsageTable(events) {
-  if (!events.length) return '<div class="empty-state compact">Codex 未提供 Token 快照</div>';
-  return `<div class="table-scroll"><table class="event-table"><thead><tr><th>时间</th><th>输入</th><th>缓存</th><th>输出</th><th>推理</th><th>总计</th><th>上下文</th></tr></thead><tbody>${events.map((event) => `<tr><td>${escapeHtml(formatDate(event.timestampMs))}</td><td>${escapeHtml(formatTokens(event.tokens.input))}</td><td>${escapeHtml(formatTokens(event.tokens.cachedInput))}</td><td>${escapeHtml(formatTokens(event.tokens.output))}</td><td>${escapeHtml(formatTokens(event.tokens.reasoningOutput))}</td><td>${escapeHtml(formatTokens(event.tokens.total))}</td><td>${event.context.input && event.context.window ? `${(event.context.input / event.context.window * 100).toFixed(1)}%` : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  if (!events.length) return empty('Codex 未提供 Token 快照');
+  return `<div class="table-scroll"><table class="event-table"><thead><tr><th>时间</th><th>输入</th><th>缓存</th><th>缓存写入</th><th>输出</th><th>推理</th><th>总计</th><th>上下文</th></tr></thead><tbody>${events.map((event) => `<tr><td>${escapeHtml(formatDate(event.timestampMs))}</td><td>${formatTokens(event.tokens.input)}</td><td>${formatTokens(event.tokens.cachedInput)}</td><td>${formatTokens(event.tokens.cacheWriteInput)}</td><td>${formatTokens(event.tokens.output)}</td><td>${formatTokens(event.tokens.reasoningOutput)}</td><td>${formatTokens(event.tokens.total)}</td><td>${event.context.input && event.context.window ? `${(event.context.input / event.context.window * 100).toFixed(1)}%` : '—'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function renderDiagnostics(rows) {
   $('#diagnostic-count').textContent = String(rows.length);
   $('#diagnostics-content').innerHTML = rows.length ? rows.map((row) => `<div class="diagnostic-row"><span>${escapeHtml(row.event_type)}</span><span>${escapeHtml(row.event_count)} 次 · ${escapeHtml(formatDate(row.last_seen_ms))}</span></div>`).join('') : '<p class="muted">没有未知事件。</p>';
+}
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('[data-tab]').forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('[data-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.panel === tab));
 }
 
 async function streamEvents() {
@@ -371,9 +394,7 @@ async function streamEvents() {
         buffer += decoder.decode(value, { stream: true });
         const messages = buffer.split('\n\n');
         buffer = messages.pop() || '';
-        for (const message of messages) {
-          if (message.includes('event: refresh') || message.includes('event: diagnostic')) scheduleRefresh();
-        }
+        for (const message of messages) if (message.includes('event: refresh') || message.includes('event: diagnostic')) scheduleRefresh();
       }
     } catch {
       connection('offline', '正在重连');
@@ -384,26 +405,24 @@ async function streamEvents() {
 
 function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
-  state.refreshTimer = setTimeout(() => {
-    state.taskTurns.clear();
-    loadDashboard({ quiet: true });
-  }, 250);
+  state.refreshTimer = setTimeout(() => { state.taskTurns.clear(); loadDashboard({ quiet: true }); }, 250);
 }
 
-document.addEventListener('click', async (event) => {
-  const actionTarget = event.target.closest('[data-action]');
-  if (actionTarget?.dataset.action === 'toggle-task') return toggleTask(actionTarget.dataset.thread);
-  if (actionTarget?.dataset.action === 'open-turn') return openTurn(actionTarget.dataset.thread, actionTarget.dataset.turn);
+document.addEventListener('click', (event) => {
+  const tab = event.target.closest('[data-tab]');
+  if (tab) return switchTab(tab.dataset.tab);
+  const action = event.target.closest('[data-action]');
+  if (action?.dataset.action === 'toggle-task') return toggleTask(action.dataset.thread);
+  if (action?.dataset.action === 'open-turn') return openTurn(action.dataset.thread, action.dataset.turn);
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    const target = event.target.closest('[data-action="open-turn"]');
-    if (target) openTurn(target.dataset.thread, target.dataset.turn);
-  }
+  if (event.key !== 'Enter') return;
+  const target = event.target.closest('[data-action="open-turn"]');
+  if (target) openTurn(target.dataset.thread, target.dataset.turn);
 });
 
-for (const [selector, key] of [['#range-filter', 'range'], ['#project-filter', 'project'], ['#model-filter', 'model'], ['#status-filter', 'status']]) {
+for (const [selector, key] of [['#range-filter', 'range'], ['#project-filter', 'project'], ['#model-filter', 'model'], ['#effort-filter', 'effort'], ['#status-filter', 'status'], ['#mode-filter', 'mode']]) {
   $(selector).addEventListener('change', (event) => { state.filters[key] = event.target.value; state.openTask = null; state.taskTurns.clear(); loadDashboard(); });
 }
 
