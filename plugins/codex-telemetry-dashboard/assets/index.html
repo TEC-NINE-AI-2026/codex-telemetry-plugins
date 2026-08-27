@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Codex 性能面板</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/dashboard.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="/logo.svg" alt="" width="40" height="40">
+        <div>
+          <p class="eyebrow">LOCAL CODEX TELEMETRY</p>
+          <h1>Codex 性能面板</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="connection" class="status-pill pending"><i></i>正在连接</span>
+        <button id="reimport" class="button secondary" type="button">重新导入</button>
+        <button id="clear-history" class="button danger" type="button">清空历史</button>
+      </div>
+    </header>
+
+    <section class="filterbar" aria-label="筛选器">
+      <label>时间范围
+        <select id="range-filter">
+          <option value="today">今天</option>
+          <option value="7d" selected>最近 7 天</option>
+          <option value="30d">最近 30 天</option>
+          <option value="all">全部</option>
+        </select>
+      </label>
+      <label>项目<select id="project-filter"><option value="">全部项目</option></select></label>
+      <label>模型<select id="model-filter"><option value="">全部模型</option></select></label>
+      <label>状态<select id="status-filter"><option value="">全部状态</option></select></label>
+      <span id="updated-at" class="updated-at">尚未更新</span>
+    </section>
+
+    <section id="error-banner" class="banner error hidden" role="alert"></section>
+    <section id="import-banner" class="banner info hidden">正在后台导入 Codex 历史日志，数据会逐步出现。</section>
+
+    <section id="active-section" class="section hidden">
+      <div class="section-heading">
+        <div><p class="eyebrow">LIVE</p><h2>正在运行</h2></div>
+      </div>
+      <div id="active-turns" class="active-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <div><p class="eyebrow">ALLOWANCE</p><h2>订阅使用量</h2></div>
+        <span id="plan-type" class="muted">Codex 未提供</span>
+      </div>
+      <div id="subscription" class="subscription-grid">
+        <div class="empty-state compact">等待首个 usage 快照</div>
+      </div>
+    </section>
+
+    <section id="kpis" class="kpi-grid" aria-label="关键指标"></section>
+
+    <section class="charts-grid">
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">LATENCY</p><h2>轮次耗时与阶段分布</h2></div>
+          <span class="muted">最近 120 轮</span>
+        </div>
+        <div id="latency-chart" class="chart"></div>
+        <div id="latency-legend" class="legend"></div>
+      </article>
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">TOKENS &amp; CONTEXT</p><h2>Token 与上下文趋势</h2></div>
+          <span class="muted">每轮</span>
+        </div>
+        <div id="token-chart" class="chart"></div>
+        <div class="legend"><span><i class="swatch token"></i>总 Token</span><span><i class="swatch context"></i>上下文占用</span></div>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <div><p class="eyebrow">TASKS</p><h2>任务与消息轮次</h2></div>
+        <span id="task-count" class="muted">0 个任务</span>
+      </div>
+      <div id="task-list" class="task-list"><div class="empty-state">正在读取本地指标…</div></div>
+    </section>
+
+    <details class="diagnostics panel">
+      <summary>兼容性诊断 <span id="diagnostic-count" class="badge neutral">0</span></summary>
+      <div id="diagnostics-content" class="diagnostics-content"><p class="muted">没有未知事件。</p></div>
+    </details>
+
+    <footer>
+      <span>只读扫描 Codex 会话日志 · 数据仅保存在本机</span>
+      <span id="source-count">0 个日志源</span>
+    </footer>
+  </main>
+
+  <dialog id="turn-dialog">
+    <div class="dialog-head">
+      <div><p class="eyebrow">TURN DETAILS</p><h2 id="dialog-title">轮次详情</h2></div>
+      <button id="close-dialog" class="icon-button" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="dialog-body"></div>
+  </dialog>
+
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-card">
+      <img src="/logo.svg" alt="" width="52" height="52">
+      <h2>缺少本地访问令牌</h2>
+      <p>请通过 Codex 插件的“打开 Codex 性能面板”启动此页面，不要直接复制不含令牌的地址。</p>
+    </div>
+  </div>
+</body>
+</html>

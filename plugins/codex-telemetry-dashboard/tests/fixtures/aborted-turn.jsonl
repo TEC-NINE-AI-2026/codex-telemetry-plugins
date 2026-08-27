@@ -1,0 +1,4 @@
+{"timestamp":"2023-11-14T23:00:00.000Z","type":"session_meta","payload":{"id":"thread-aborted","session_id":"thread-aborted","cwd":"C:\\workspace\\fixture","timestamp":"2023-11-14T23:00:00.000Z"}}
+{"timestamp":"2023-11-14T23:00:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-aborted","started_at":1700002800}}
+{"timestamp":"2023-11-14T23:00:01.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-aborted","started_at_ms":1700002800200,"completed_at_ms":1700002801000,"item":{"id":"reason-abort","type":"Reasoning","content":"DO_NOT_SAVE"}}}
+{"timestamp":"2023-11-14T23:00:02.000Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-aborted","started_at":1700002800,"completed_at":1700002802,"duration_ms":2000,"reason":"user_cancelled"}}

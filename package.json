@@ -1,0 +1,23 @@
+{
+  "name": "codex-telemetry-plugins-marketplace",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Marketplace repository for the Codex Telemetry Dashboard plugin.",
+  "license": "MIT",
+  "homepage": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins/issues"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-repository.mjs",
+    "test": "node --test plugins/codex-telemetry-dashboard/tests/platform-paths.test.mjs plugins/codex-telemetry-dashboard/tests/telemetry-core.test.mjs plugins/codex-telemetry-dashboard/tests/server-auth.test.mjs plugins/codex-telemetry-dashboard/tests/launcher-lifecycle.test.mjs",
+    "check": "npm run validate && npm test"
+  }
+}

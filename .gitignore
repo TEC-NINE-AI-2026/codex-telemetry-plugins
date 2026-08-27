@@ -1,0 +1,12 @@
+.DS_Store
+Thumbs.db
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+runtime.json
+node_modules/
+coverage/
+.idea/
+.vscode/
+.codex-smoke/

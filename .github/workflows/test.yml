@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate and test
+        run: npm run check
+      - name: Validate POSIX shell entrypoints
+        if: runner.os != 'Windows'
+        run: |
+          sh -n plugins/codex-telemetry-dashboard/scripts/launcher.sh
+          sh -n plugins/codex-telemetry-dashboard/scripts/stop.sh
+      - name: Validate PowerShell entrypoints
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content -Raw plugins/codex-telemetry-dashboard/scripts/launcher.ps1)) | Out-Null
+          [scriptblock]::Create((Get-Content -Raw plugins/codex-telemetry-dashboard/scripts/stop.ps1)) | Out-Null

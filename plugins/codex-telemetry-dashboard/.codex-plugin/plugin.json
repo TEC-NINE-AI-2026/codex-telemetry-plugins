@@ -1,0 +1,40 @@
+{
+  "name": "codex-telemetry-dashboard",
+  "version": "1.1.0",
+  "description": "Local telemetry dashboard for Codex task latency, token, context, and subscription usage metrics.",
+  "author": {
+    "name": "Codex Telemetry Dashboard Contributors",
+    "url": "https://github.com/TEC-NINE-AI-2026"
+  },
+  "homepage": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins#readme",
+  "repository": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "telemetry",
+    "tokens",
+    "performance",
+    "dashboard"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex \u6027\u80fd\u9762\u677f",
+    "shortDescription": "\u67e5\u770b\u672c\u5730 Codex \u4efb\u52a1\u8017\u65f6\u3001Token\u3001\u4e0a\u4e0b\u6587\u4e0e\u8ba2\u9605\u7528\u91cf\u3002",
+    "longDescription": "\u5728 Codex \u5185\u6253\u5f00\u53ea\u8bfb\u7684\u672c\u5730\u6027\u80fd\u9762\u677f\uff0c\u6309\u9879\u76ee\u3001\u4efb\u52a1\u548c\u6d88\u606f\u8f6e\u6b21\u5206\u6790\u63a5\u6536\u3001\u63a8\u7406\u3001\u5de5\u5177\u4e0e\u56de\u590d\u9636\u6bb5\uff0c\u5e76\u6301\u7eed\u6c47\u603b Token\u3001\u4e0a\u4e0b\u6587\u7a97\u53e3\u548c\u8ba2\u9605\u7528\u91cf\u3002",
+    "developerName": "Codex Telemetry Dashboard Contributors",
+    "websiteURL": "https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "\u6253\u5f00 Codex \u6027\u80fd\u9762\u677f",
+      "\u67e5\u770b\u6700\u8fd1 7 \u5929\u7684 Codex \u6027\u80fd\u6307\u6807",
+      "\u505c\u6b62 Codex \u6027\u80fd\u9762\u677f\u670d\u52a1"
+    ],
+    "brandColor": "#5B6CFF",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg"
+  }
+}
