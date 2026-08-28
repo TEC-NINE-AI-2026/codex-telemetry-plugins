@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented here.
 
+## 1.2.1 - 2026-08-28
+
+- Preserve expanded historical turn rows while unrelated live tasks update, and refresh task details only when that task changes.
+- Add per-task revisions, request deduplication, and stale-response protection for background detail refreshes.
+- Render the stage waterfall as a CSP-compatible SVG timeline with correctly distributed bars and elapsed-time ticks.
+- Add regression coverage for selective task refreshes and waterfall geometry.
+
 ## 1.2.0 - 2026-08-27
 
 - Expand the performance view into a five-tab Codex efficiency and health analytics dashboard.

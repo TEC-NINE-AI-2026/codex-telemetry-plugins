@@ -177,12 +177,12 @@ dialog::backdrop { background: rgba(10, 13, 22, .54); backdrop-filter: blur(4px)
 .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; margin: 16px 0; }
 .detail-tile { padding: 11px; border: 1px solid var(--line); border-radius: 10px; }
 .detail-tile span { color: var(--muted); font-size: .67rem; }.detail-tile strong { display: block; margin-top: 5px; font-size: .9rem; }
-.waterfall { position: relative; min-height: 90px; margin: 16px 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 10px; overflow-x: auto; }
-.waterfall svg { display: block; width: 100%; min-width: 680px; height: auto; }
-.waterfall-row { position: relative; height: 20px; margin: 5px 0; }
-.waterfall-label { position: absolute; left: 0; width: 76px; font-size: .66rem; color: var(--muted); top: 3px; }
-.waterfall-track { position: absolute; left: 82px; right: 0; height: 14px; top: 2px; background: var(--line); border-radius: 4px; }
-.waterfall-bar { position: absolute; height: 100%; min-width: 2px; border-radius: 4px; opacity: .9; }
+.waterfall { min-height: 90px; margin: 16px 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 10px; overflow-x: auto; }
+.waterfall svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.waterfall-label { fill: var(--muted); font-size: 11px; }
+.waterfall-axis-label { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.waterfall-grid-line { stroke: var(--line); stroke-width: 1; }
+.waterfall-bar { opacity: .92; }
 .event-table { width: 100%; border-collapse: collapse; font-size: .72rem; margin-top: 10px; }
 .event-table th, .event-table td { text-align: left; border-bottom: 1px solid var(--line); padding: 7px 6px; vertical-align: top; }
 .event-table th { color: var(--muted); font-weight: 650; }

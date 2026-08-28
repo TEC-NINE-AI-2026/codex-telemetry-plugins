@@ -1,6 +1,6 @@
 {
   "name": "codex-telemetry-dashboard",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Local Codex efficiency and health analytics for latency, models, tools, agents, tokens, context, reliability, and usage limits.",
   "author": {
     "name": "Codex Telemetry Dashboard Contributors",

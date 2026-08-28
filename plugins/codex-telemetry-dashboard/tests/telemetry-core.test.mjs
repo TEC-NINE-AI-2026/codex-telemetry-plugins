@@ -44,6 +44,8 @@ test('collector aggregates phases, token deltas, context, limits, and duplicate 
 
   const turns = store.turnRows();
   assert.equal(turns.length, 3, 'duplicate rollout must not create another turn');
+  const fixtureTask = store.taskList({ range: 'all' }).find((task) => task.threadId === 'thread-fixture');
+  assert.ok(Number.isFinite(fixtureTask.revision), 'task list exposes a revision for selective detail refresh');
   const complete = turns.find((turn) => turn.turnId === 'turn-complete');
   assert.equal(complete.title, '脱敏完整任务');
   assert.equal(complete.status, 'completed');

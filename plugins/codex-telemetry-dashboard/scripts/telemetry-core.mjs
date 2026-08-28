@@ -614,6 +614,7 @@ export class TelemetryStore {
       turnId: row.turn_id, threadId: row.thread_id, sessionId: row.session_id,
       title: row.title || '未命名任务', cwd: row.cwd, project: row.cwd ? basename(row.cwd) : '未知项目',
       status: row.status, receivedAtMs: row.received_at_ms, userSentAtMs: row.user_sent_at_ms,
+      updatedAtMs: row.updated_at_ms,
       completedAtMs: row.completed_at_ms, durationMs: row.duration_ms, ttftMs: row.ttft_ms,
       model: row.model || '未知模型', effort: row.effort || null,
       userExcerpt: row.user_excerpt, assistantExcerpt: row.assistant_excerpt,
@@ -875,6 +876,7 @@ export class TelemetryStore {
     }
     return [...grouped.values()].map((task) => ({
       ...task,
+      revision: Math.max(...task.turns.map((turn) => turn.updatedAtMs ?? 0)),
       lastActivityMs: Math.max(...task.turns.map((turn) => turn.receivedAtMs ?? 0)),
       totalTokens: task.turns.reduce((sum, turn) => sum + turn.tokens.total, 0),
       totalDurationMs: task.turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0),

@@ -39,11 +39,11 @@ codex plugin list
 
 ## 创建版本标签
 
-当前插件版本是 `1.2.0`。发布验证完成后，可以创建对应标签：
+当前插件版本是 `1.2.1`。发布验证完成后，可以创建对应标签：
 
 ```powershell
-git tag -a v1.2.0 -m "Codex Efficiency and Health Analytics Dashboard 1.2.0"
-git push origin v1.2.0
+git tag -a v1.2.1 -m "Codex Efficiency and Health Analytics Dashboard 1.2.1"
+git push origin v1.2.1
 ```
 
 ## 后续更新

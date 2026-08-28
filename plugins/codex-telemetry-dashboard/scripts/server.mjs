@@ -22,6 +22,7 @@ for (const [route, file, type] of [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/index.html', 'index.html', 'text/html; charset=utf-8'],
   ['/dashboard.js', 'dashboard.js', 'text/javascript; charset=utf-8'],
+  ['/dashboard-state.mjs', 'dashboard-state.mjs', 'text/javascript; charset=utf-8'],
   ['/styles.css', 'styles.css', 'text/css; charset=utf-8'],
   ['/logo.svg', 'logo.svg', 'image/svg+xml'],
 ]) {

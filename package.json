@@ -1,6 +1,6 @@
 {
   "name": "codex-telemetry-plugins-marketplace",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Marketplace repository for the Codex Efficiency and Health Analytics Dashboard plugin.",
   "license": "MIT",
@@ -17,7 +17,7 @@
   },
   "scripts": {
     "validate": "node scripts/validate-repository.mjs",
-    "test": "node --test plugins/codex-telemetry-dashboard/tests/platform-paths.test.mjs plugins/codex-telemetry-dashboard/tests/telemetry-core.test.mjs plugins/codex-telemetry-dashboard/tests/server-auth.test.mjs plugins/codex-telemetry-dashboard/tests/launcher-lifecycle.test.mjs",
+    "test": "node --test plugins/codex-telemetry-dashboard/tests/platform-paths.test.mjs plugins/codex-telemetry-dashboard/tests/telemetry-core.test.mjs plugins/codex-telemetry-dashboard/tests/server-auth.test.mjs plugins/codex-telemetry-dashboard/tests/launcher-lifecycle.test.mjs plugins/codex-telemetry-dashboard/tests/dashboard-state.test.mjs",
     "check": "npm run validate && npm test"
   }
 }

@@ -1,3 +1,5 @@
+import { taskCacheNeedsRefresh, taskRevision, waterfallTimeline } from './dashboard-state.mjs';
+
 const tokenFromHash = new URLSearchParams(location.hash.slice(1)).get('token');
 if (tokenFromHash) {
   sessionStorage.setItem('codexTelemetryToken', tokenFromHash);
@@ -11,7 +13,11 @@ const state = {
   tasks: [],
   openTask: null,
   taskTurns: new Map(),
+  taskTurnErrors: new Map(),
+  taskTurnRequests: new Map(),
+  filterGeneration: 0,
   loading: false,
+  refreshQueued: false,
   refreshTimer: null,
   activeTab: 'overview',
   filters: { range: '7d', project: '', model: '', effort: '', status: '', mode: '' },
@@ -99,7 +105,7 @@ function showError(message) {
 }
 
 async function loadDashboard({ quiet = false } = {}) {
-  if (state.loading) return;
+  if (state.loading) { state.refreshQueued = true; return; }
   state.loading = true;
   if (!quiet) connection('pending', '正在更新');
   try {
@@ -110,7 +116,11 @@ async function loadDashboard({ quiet = false } = {}) {
     state.summary = summary;
     state.analytics = analytics;
     state.tasks = taskPayload.tasks;
+    if (state.openTask && !state.tasks.some((task) => task.threadId === state.openTask)) state.openTask = null;
     render();
+    const openTask = state.tasks.find((task) => task.threadId === state.openTask);
+    const cached = state.taskTurns.get(state.openTask);
+    if (taskCacheNeedsRefresh(cached, openTask)) loadTaskTurns(state.openTask);
     connection('online', '实时连接');
     showError('');
   } catch (error) {
@@ -118,6 +128,10 @@ async function loadDashboard({ quiet = false } = {}) {
     showError(`无法读取本地指标：${error.message}`);
   } finally {
     state.loading = false;
+    if (state.refreshQueued) {
+      state.refreshQueued = false;
+      queueMicrotask(() => loadDashboard({ quiet: true }));
+    }
   }
 }
 
@@ -296,35 +310,75 @@ function renderTasks(tasks) {
   $('#task-count').textContent = `${tasks.length} 个任务`;
   $('#task-list').innerHTML = tasks.length ? tasks.map((task) => {
     const open = state.openTask === task.threadId;
-    return `<article class="task-card ${open ? 'open' : ''}"><button class="task-summary" type="button" data-action="toggle-task" data-thread="${escapeHtml(task.threadId)}"><div><h3 class="task-title">${escapeHtml(task.title)}</h3><p class="task-path" title="${escapeHtml(task.cwd || '')}">${escapeHtml(task.project)} · ${escapeHtml(task.modes.length ? task.modes.map(modeLabel).join(' / ') : '工作模式未知')}</p></div><div class="metric-mini"><strong>${task.turns.length}</strong>轮次</div><div class="metric-mini hide-small"><strong>${formatPercent(task.completionRate)}</strong>完成率</div><div class="metric-mini hide-medium"><strong>${formatTokens(task.totalTokens)}</strong>Token</div><div class="metric-mini hide-medium"><strong>${task.toolCalls}</strong>工具 · ${task.toolFailures} 失败</div><span class="chevron">›</span></button>${open ? `<div class="turns">${renderTurnRows(state.taskTurns.get(task.threadId))}</div>` : ''}</article>`;
+    return `<article class="task-card ${open ? 'open' : ''}"><button class="task-summary" type="button" data-action="toggle-task" data-thread="${escapeHtml(task.threadId)}"><div><h3 class="task-title">${escapeHtml(task.title)}</h3><p class="task-path" title="${escapeHtml(task.cwd || '')}">${escapeHtml(task.project)} · ${escapeHtml(task.modes.length ? task.modes.map(modeLabel).join(' / ') : '工作模式未知')}</p></div><div class="metric-mini"><strong>${task.turns.length}</strong>轮次</div><div class="metric-mini hide-small"><strong>${formatPercent(task.completionRate)}</strong>完成率</div><div class="metric-mini hide-medium"><strong>${formatTokens(task.totalTokens)}</strong>Token</div><div class="metric-mini hide-medium"><strong>${task.toolCalls}</strong>工具 · ${task.toolFailures} 失败</div><span class="chevron">›</span></button>${open ? `<div class="turns">${renderTurnRows(state.taskTurns.get(task.threadId), state.taskTurnErrors.get(task.threadId))}</div>` : ''}</article>`;
   }).join('') : empty('当前筛选条件下没有任务');
 }
 
-function renderTurnRows(turns) {
-  if (!turns) return empty('正在载入轮次…');
+function renderTurnRows(cacheEntry, error) {
+  if (!cacheEntry && error) return empty('轮次载入失败，请折叠后重试');
+  if (!cacheEntry) return empty('正在载入轮次…');
+  const { turns } = cacheEntry;
   if (!turns.length) return empty('没有轮次');
   return turns.map((turn) => `<div class="turn-row" role="button" tabindex="0" data-action="open-turn" data-thread="${escapeHtml(turn.threadId)}" data-turn="${escapeHtml(turn.turnId)}"><div><span class="badge ${escapeHtml(turn.status)}">${escapeHtml(statusLabel(turn.status))}</span><p class="task-path">${escapeHtml(formatDate(turn.receivedAtMs, false))}</p></div><div class="excerpt"><p>${escapeHtml(turn.userExcerpt || '用户消息未提供')}</p><p class="answer">${escapeHtml(turn.assistantExcerpt || '最终回复未提供')}</p></div><div class="metric-mini"><strong>${formatDuration(turn.durationMs)}</strong>耗时</div><div class="metric-mini hide-small"><strong>${formatTokens(turn.tokens.total)}</strong>Token</div><div class="metric-mini hide-medium"><strong>${formatContextPercent(turn.context.latestPercent)}</strong>上下文</div><div class="metric-mini hide-medium"><strong>${turn.toolSummary.calls}</strong>工具</div></div>`).join('');
+}
+
+function invalidateTaskTurns({ collapse = true } = {}) {
+  state.filterGeneration += 1;
+  state.taskTurns.clear();
+  state.taskTurnErrors.clear();
+  state.taskTurnRequests.clear();
+  if (collapse) state.openTask = null;
+}
+
+async function loadTaskTurns(threadId) {
+  if (!threadId) return null;
+  const existingRequest = state.taskTurnRequests.get(threadId);
+  if (existingRequest) return existingRequest;
+  const generation = state.filterGeneration;
+  const task = state.tasks.find((entry) => entry.threadId === threadId);
+  const revision = taskRevision(task);
+  const cached = state.taskTurns.get(threadId);
+  if (cached && cached.revision === revision) return cached.turns;
+  state.taskTurnErrors.delete(threadId);
+  let applied = false;
+  const request = api(`/api/tasks/${encodeURIComponent(threadId)}/turns?${queryString()}`)
+    .then((payload) => {
+      if (generation !== state.filterGeneration) return null;
+      state.taskTurns.set(threadId, { revision, turns: payload.turns });
+      applied = true;
+      state.taskTurnErrors.delete(threadId);
+      if (state.openTask === threadId) renderTasks(state.tasks);
+      return payload.turns;
+    })
+    .catch((error) => {
+      if (generation !== state.filterGeneration) return null;
+      if (!cached) state.taskTurnErrors.set(threadId, error.message);
+      showError(`${cached ? '无法刷新' : '无法读取'}任务轮次：${error.message}`);
+      if (state.openTask === threadId) renderTasks(state.tasks);
+      return null;
+    })
+    .finally(() => {
+      if (state.taskTurnRequests.get(threadId) === request) state.taskTurnRequests.delete(threadId);
+      const latestTask = state.tasks.find((entry) => entry.threadId === threadId);
+      if (applied && state.openTask === threadId && taskCacheNeedsRefresh(state.taskTurns.get(threadId), latestTask)) {
+        queueMicrotask(() => loadTaskTurns(threadId));
+      }
+    });
+  state.taskTurnRequests.set(threadId, request);
+  return request;
 }
 
 async function toggleTask(threadId) {
   if (state.openTask === threadId) { state.openTask = null; renderTasks(state.tasks); return; }
   state.openTask = threadId;
+  state.taskTurnErrors.delete(threadId);
   renderTasks(state.tasks);
-  if (!state.taskTurns.has(threadId)) {
-    try {
-      const payload = await api(`/api/tasks/${encodeURIComponent(threadId)}/turns?${queryString()}`);
-      state.taskTurns.set(threadId, payload.turns);
-    } catch (error) { showError(`无法读取任务轮次：${error.message}`); state.taskTurns.set(threadId, []); }
-  }
-  renderTasks(state.tasks);
+  await loadTaskTurns(threadId);
 }
 
 async function openTurn(threadId, turnId) {
-  if (!state.taskTurns.has(threadId)) {
-    const payload = await api(`/api/tasks/${encodeURIComponent(threadId)}/turns?${queryString()}`);
-    state.taskTurns.set(threadId, payload.turns);
-  }
-  const turn = state.taskTurns.get(threadId)?.find((entry) => entry.turnId === turnId);
+  if (!state.taskTurns.has(threadId)) await loadTaskTurns(threadId);
+  const turn = state.taskTurns.get(threadId)?.turns.find((entry) => entry.turnId === turnId);
   if (!turn) return;
   $('#dialog-title').textContent = turn.title;
   $('#dialog-body').innerHTML = renderTurnDetails(turn);
@@ -345,13 +399,27 @@ function renderTurnDetails(turn) {
 }
 
 function renderWaterfall(turn) {
-  const stages = turn.stages.filter((stage) => stage.startedAtMs && stage.completedAtMs);
-  if (!stages.length || !turn.receivedAtMs || !turn.durationMs) return empty('没有足够的时间戳数据');
-  return `<div class="waterfall">${stages.map((stage) => {
-    const left = clamp((stage.startedAtMs - turn.receivedAtMs) / turn.durationMs * 100, 0, 100);
-    const width = clamp((stage.completedAtMs - stage.startedAtMs) / turn.durationMs * 100, .3, 100 - left);
-    return `<div class="waterfall-row"><span class="waterfall-label">${escapeHtml(stageLabel(stage.kind))}</span><div class="waterfall-track"><i class="waterfall-bar bar-${escapeHtml(stage.kind)}" style="left:${left}%;width:${width}%" title="${escapeHtml(`${stage.rawType} · ${formatDuration(stage.durationMs)}`)}"></i></div></div>`;
-  }).join('')}</div>`;
+  const timeline = waterfallTimeline(turn);
+  if (!timeline) return empty('没有足够的时间戳数据');
+  const ticks = [0, .25, .5, .75, 1];
+  const chartWidth = 1000;
+  const trackLeft = 120;
+  const trackWidth = chartWidth - trackLeft - 12;
+  const axisY = 18;
+  const rowHeight = 26;
+  const firstRowY = 32;
+  const chartHeight = firstRowY + timeline.stages.length * rowHeight + 8;
+  const gridLines = ticks.map((ratio) => {
+    const x = trackLeft + ratio * trackWidth;
+    return `<line class="waterfall-grid-line" x1="${x}" x2="${x}" y1="${firstRowY - 4}" y2="${chartHeight - 8}"></line><text class="waterfall-axis-label" x="${x}" y="${axisY}" text-anchor="${ratio === 0 ? 'start' : ratio === 1 ? 'end' : 'middle'}">${escapeHtml(formatDuration(timeline.durationMs * ratio))}</text>`;
+  }).join('');
+  const rows = timeline.stages.map(({ stage, left, width }, index) => {
+    const y = firstRowY + index * rowHeight;
+    const x = trackLeft + left / 100 * trackWidth;
+    const barWidth = Math.max(2, width / 100 * trackWidth);
+    return `<text class="waterfall-label" x="0" y="${y + 11}">${escapeHtml(stageLabel(stage.kind))}</text><rect class="waterfall-track-svg" x="${trackLeft}" y="${y}" width="${trackWidth}" height="14" rx="4"></rect><rect class="waterfall-bar bar-${escapeHtml(stage.kind)}" x="${x.toFixed(2)}" y="${y}" width="${barWidth.toFixed(2)}" height="14" rx="4"><title>${escapeHtml(`${stage.rawType} · ${formatDuration(stage.durationMs)}`)}</title></rect>`;
+  }).join('');
+  return `<div class="waterfall"><svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="阶段时间瀑布">${gridLines}${rows}</svg></div>`;
 }
 
 function renderStageTable(stages) {
@@ -405,7 +473,7 @@ async function streamEvents() {
 
 function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
-  state.refreshTimer = setTimeout(() => { state.taskTurns.clear(); loadDashboard({ quiet: true }); }, 250);
+  state.refreshTimer = setTimeout(() => loadDashboard({ quiet: true }), 250);
 }
 
 document.addEventListener('click', (event) => {
@@ -423,20 +491,20 @@ document.addEventListener('keydown', (event) => {
 });
 
 for (const [selector, key] of [['#range-filter', 'range'], ['#project-filter', 'project'], ['#model-filter', 'model'], ['#effort-filter', 'effort'], ['#status-filter', 'status'], ['#mode-filter', 'mode']]) {
-  $(selector).addEventListener('change', (event) => { state.filters[key] = event.target.value; state.openTask = null; state.taskTurns.clear(); loadDashboard(); });
+  $(selector).addEventListener('change', (event) => { state.filters[key] = event.target.value; invalidateTaskTurns(); loadDashboard(); });
 }
 
 $('#close-dialog').addEventListener('click', () => $('#turn-dialog').close());
 $('#clear-history').addEventListener('click', async () => {
   if (!confirm('这会清除已完成轮次的本地指标缓存，但不会删除 Codex 原始日志。继续吗？')) return;
   if (!confirm('请再次确认：清空后将从下一轮继续采集；如需恢复历史，可使用“重新导入”。')) return;
-  try { await api('/api/history/clear', { method: 'POST', body: JSON.stringify({ confirm: 'CLEAR_METRICS' }) }); state.taskTurns.clear(); await loadDashboard(); }
+  try { await api('/api/history/clear', { method: 'POST', body: JSON.stringify({ confirm: 'CLEAR_METRICS' }) }); invalidateTaskTurns(); await loadDashboard(); }
   catch (error) { showError(`清空失败：${error.message}`); }
 });
 
 $('#reimport').addEventListener('click', async () => {
   if (!confirm('将从 Codex 原始日志重新构建全部指标，期间数据会逐步出现。继续吗？')) return;
-  try { await api('/api/history/reimport', { method: 'POST', body: JSON.stringify({ confirm: 'REIMPORT_ALL' }) }); state.taskTurns.clear(); await loadDashboard(); }
+  try { await api('/api/history/reimport', { method: 'POST', body: JSON.stringify({ confirm: 'REIMPORT_ALL' }) }); invalidateTaskTurns(); await loadDashboard(); }
   catch (error) { showError(`重新导入失败：${error.message}`); }
 });
 
