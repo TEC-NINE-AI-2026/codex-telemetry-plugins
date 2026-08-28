@@ -56,6 +56,7 @@ h3 { font-size: .98rem; }
 .status-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 4px rgba(230, 156, 45, .14); }
 .status-pill.online i { background: var(--green); box-shadow: 0 0 0 4px rgba(24, 169, 121, .14); }
 .status-pill.offline i { background: var(--red); box-shadow: 0 0 0 4px rgba(220, 90, 100, .14); }
+.version-pill { color: var(--muted); font-variant-numeric: tabular-nums; }
 .filterbar { margin: 24px 0; justify-content: flex-start; flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); backdrop-filter: blur(18px); }
 .filterbar label { color: var(--muted); font-size: .7rem; font-weight: 700; display: grid; gap: 4px; }
 select { min-width: 130px; max-width: 230px; border: 0; background: transparent; color: inherit; padding: 0 22px 0 0; outline: none; font-weight: 600; }

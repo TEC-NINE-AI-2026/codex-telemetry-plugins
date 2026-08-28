@@ -27,11 +27,47 @@ jobs:
           node-version: "22"
       - name: Validate and test
         run: npm run check
-      - name: Validate POSIX shell entrypoints
+      - name: Exercise POSIX shell entrypoints
         if: runner.os != 'Windows'
+        shell: bash
         run: |
+          set -eu
           sh -n plugins/codex-telemetry-dashboard/scripts/launcher.sh
           sh -n plugins/codex-telemetry-dashboard/scripts/stop.sh
+
+          test_root=$(mktemp -d)
+          export CODEX_TELEMETRY_DATA_DIR="$test_root/data with spaces"
+          export CODEX_HOME="$test_root/codex home"
+          mkdir -p "$CODEX_HOME/sessions"
+
+          cleanup() {
+            sh plugins/codex-telemetry-dashboard/scripts/stop.sh >/dev/null 2>&1 || true
+            if [ -n "${test_root:-}" ] && [ -d "$test_root" ]; then
+              rm -rf -- "$test_root"
+            fi
+          }
+          trap cleanup EXIT
+
+          first=$(sh plugins/codex-telemetry-dashboard/scripts/launcher.sh)
+          second=$(sh plugins/codex-telemetry-dashboard/scripts/launcher.sh)
+          FIRST_RESULT="$first" SECOND_RESULT="$second" node <<'NODE'
+          const first = JSON.parse(process.env.FIRST_RESULT);
+          const second = JSON.parse(process.env.SECOND_RESULT);
+          if (first.reused !== false || first.version !== '1.2.1') {
+            throw new Error(`Unexpected first launch result: ${process.env.FIRST_RESULT}`);
+          }
+          if (second.reused !== true || second.version !== '1.2.1' || second.pid !== first.pid) {
+            throw new Error(`Unexpected reused launch result: ${process.env.SECOND_RESULT}`);
+          }
+          NODE
+
+          stopped=$(sh plugins/codex-telemetry-dashboard/scripts/stop.sh)
+          STOP_RESULT="$stopped" node <<'NODE'
+          const stopped = JSON.parse(process.env.STOP_RESULT);
+          if (stopped.stopped !== true || !Number.isInteger(stopped.pid)) {
+            throw new Error(`Unexpected stop result: ${process.env.STOP_RESULT}`);
+          }
+          NODE
       - name: Validate PowerShell entrypoints
         if: runner.os == 'Windows'
         shell: pwsh

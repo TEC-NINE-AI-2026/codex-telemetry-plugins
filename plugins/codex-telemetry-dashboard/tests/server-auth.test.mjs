@@ -53,11 +53,17 @@ test('server binds localhost and rejects API requests without the local token', 
   const runtimePath = join(dataRoot, 'runtime.json');
   const runtime = await waitForRuntime(runtimePath);
   assert.equal(runtime.host, '127.0.0.1');
+  assert.equal(runtime.version, '1.2.1');
   const base = `http://127.0.0.1:${runtime.port}`;
   assert.equal((await fetch(`${base}/api/health`)).status, 401);
   const authorized = await fetch(`${base}/api/health`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(authorized.status, 200);
-  assert.equal((await authorized.json()).ok, true);
+  const health = await authorized.json();
+  assert.equal(health.ok, true);
+  assert.equal(health.version, '1.2.1');
+  const summary = await fetch(`${base}/api/summary?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
+  assert.equal(summary.status, 200);
+  assert.equal((await summary.json()).version, '1.2.1');
   const analytics = await fetch(`${base}/api/analytics?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(analytics.status, 200);
   const payload = await analytics.json();

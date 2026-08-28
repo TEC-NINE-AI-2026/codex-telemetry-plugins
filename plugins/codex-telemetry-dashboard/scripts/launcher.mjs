@@ -10,6 +10,7 @@ const pluginRoot = dirname(scriptRoot);
 const dataRoot = resolveDataRoot();
 const runtimePath = join(dataRoot, 'runtime.json');
 const serverPath = join(scriptRoot, 'server.mjs');
+const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
 
 function assertNodeVersion() {
   const [major, minor] = process.versions.node.split('.').map(Number);
@@ -22,27 +23,68 @@ async function readRuntime() {
   try { return JSON.parse(await readFile(runtimePath, 'utf8')); } catch { return null; }
 }
 
-async function healthy(runtime) {
-  if (!runtime?.port || !runtime?.token || !runtime?.pid) return false;
+async function readVersion() {
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (typeof manifest.version !== 'string' || !manifest.version.trim()) throw new Error('Plugin manifest version is required.');
+  return manifest.version.trim();
+}
+
+async function health(runtime) {
+  if (!runtime?.port || !runtime?.token || !runtime?.pid) return null;
   try {
     const response = await fetch(`http://127.0.0.1:${runtime.port}/api/health`, {
       headers: { 'X-Dashboard-Token': String(runtime.token) },
       signal: AbortSignal.timeout(1000),
     });
-    return response.ok && (await response.json()).ok === true;
-  } catch { return false; }
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.ok === true ? payload : null;
+  } catch { return null; }
 }
 
-function result(runtime, reused) {
-  return { url: `http://127.0.0.1:${runtime.port}/#token=${runtime.token}`, pid: Number(runtime.pid), reused };
+function processExists(pid) {
+  try { process.kill(Number(pid), 0); return true; } catch { return false; }
+}
+
+async function waitForExit(pid, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) return true;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  return !processExists(pid);
+}
+
+async function shutdownMismatched(runtime) {
+  let response;
+  try {
+    response = await fetch(`http://127.0.0.1:${runtime.port}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'X-Dashboard-Token': String(runtime.token) },
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch (error) {
+    throw new Error(`Running dashboard version differs and could not be stopped: ${error.message}`);
+  }
+  if (!response.ok) throw new Error(`Running dashboard version differs and rejected shutdown with HTTP ${response.status}.`);
+  if (!await waitForExit(runtime.pid)) throw new Error('Running dashboard version differs but did not exit after shutdown.');
+}
+
+function result(runtime, reused, version) {
+  return { url: `http://127.0.0.1:${runtime.port}/#token=${runtime.token}`, pid: Number(runtime.pid), reused, version };
 }
 
 async function main() {
   assertNodeVersion();
+  const version = await readVersion();
   const existing = await readRuntime();
-  if (await healthy(existing)) {
-    process.stdout.write(`${JSON.stringify(result(existing, true))}\n`);
-    return;
+  const existingHealth = await health(existing);
+  if (existingHealth) {
+    if (existingHealth.version === version) {
+      process.stdout.write(`${JSON.stringify(result(existing, true, version))}\n`);
+      return;
+    }
+    await shutdownMismatched(existing);
   }
 
   await mkdir(dataRoot, { recursive: true });
@@ -64,11 +106,13 @@ async function main() {
   while (Date.now() < deadline) {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
     const runtime = await readRuntime();
-    if (runtime?.pid === child.pid && await healthy(runtime)) {
-      process.stdout.write(`${JSON.stringify(result(runtime, false))}\n`);
+    const childHealth = runtime?.pid === child.pid ? await health(runtime) : null;
+    if (childHealth?.version === version) {
+      process.stdout.write(`${JSON.stringify(result(runtime, false, version))}\n`);
       return;
     }
   }
+  try { process.kill(child.pid, 'SIGTERM'); } catch { /* already stopped */ }
   let details = 'No error log was produced.';
   try { details = (await readFile(join(dataRoot, 'server.stderr.log'), 'utf8')).slice(-4000); } catch { /* no log */ }
   throw new Error(`The telemetry dashboard did not start within 10 seconds. ${details}`);

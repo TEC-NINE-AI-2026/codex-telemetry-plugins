@@ -116,6 +116,7 @@ async function loadDashboard({ quiet = false } = {}) {
     state.summary = summary;
     state.analytics = analytics;
     state.tasks = taskPayload.tasks;
+    $('#version-badge').textContent = summary.version ? `v${summary.version}` : '版本未知';
     if (state.openTask && !state.tasks.some((task) => task.threadId === state.openTask)) state.openTask = null;
     render();
     const openTask = state.tasks.find((task) => task.threadId === state.openTask);

@@ -8,6 +8,9 @@ All notable changes to this repository are documented here.
 - Add per-task revisions, request deduplication, and stale-response protection for background detail refreshes.
 - Render the stage waterfall as a CSP-compatible SVG timeline with correctly distributed bars and elapsed-time ticks.
 - Add regression coverage for selective task refreshes and waterfall geometry.
+- Show the running plugin version in the dashboard and expose it through health, summary, runtime, and launcher metadata.
+- Replace healthy services from a different plugin version instead of reusing stale in-memory assets after an upgrade.
+- Exercise the POSIX launch, same-version reuse, and stop flow on macOS and Linux CI with application-data paths containing spaces.
 
 ## 1.2.0 - 2026-08-27
 
