@@ -17,4 +17,4 @@ else
   exit 1
 fi
 
-exec "$node_path" "$script_dir/launcher.mjs"
+exec "$node_path" "$script_dir/launcher.mjs" "$@"

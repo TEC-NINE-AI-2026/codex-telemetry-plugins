@@ -53,21 +53,54 @@ test('server binds localhost and rejects API requests without the local token', 
   const runtimePath = join(dataRoot, 'runtime.json');
   const runtime = await waitForRuntime(runtimePath);
   assert.equal(runtime.host, '127.0.0.1');
-  assert.equal(runtime.version, '1.2.1');
+  assert.equal(runtime.version, '1.3.0');
   const base = `http://127.0.0.1:${runtime.port}`;
   assert.equal((await fetch(`${base}/api/health`)).status, 401);
   const authorized = await fetch(`${base}/api/health`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(authorized.status, 200);
   const health = await authorized.json();
   assert.equal(health.ok, true);
-  assert.equal(health.version, '1.2.1');
+  assert.equal(health.version, '1.3.0');
   const summary = await fetch(`${base}/api/summary?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(summary.status, 200);
-  assert.equal((await summary.json()).version, '1.2.1');
+  const summaryPayload = await summary.json();
+  assert.equal(summaryPayload.version, '1.3.0');
+  assert.deepEqual(summaryPayload.access, { mode: 'local', bindHost: '127.0.0.1', hosts: ['127.0.0.1'] });
   const analytics = await fetch(`${base}/api/analytics?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
   assert.equal(analytics.status, 200);
   const payload = await analytics.json();
   for (const key of ['coverage', 'overview', 'efficiency', 'cache', 'tools', 'agents', 'context', 'reliability', 'concurrency', 'workModes']) assert.ok(key in payload);
+  await fetch(`${base}/api/shutdown`, { method: 'POST', headers: { 'X-Dashboard-Token': runtime.token } });
+  await waitForExit(child);
+});
+
+test('LAN mode binds all IPv4 interfaces while retaining token authentication', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-telemetry-server-lan-'));
+  const dataRoot = join(root, 'data');
+  const codexHome = join(root, '.codex');
+  await mkdir(join(codexHome, 'sessions'), { recursive: true });
+  const child = spawn(process.execPath, [serverPath], {
+    env: { ...process.env, CODEX_TELEMETRY_DATA_DIR: dataRoot, CODEX_HOME: codexHome, CODEX_TELEMETRY_ACCESS_MODE: 'lan' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill();
+    await waitForExit(child).catch(() => {});
+    await removeWithRetry(root);
+  });
+  const runtime = await waitForRuntime(join(dataRoot, 'runtime.json'));
+  assert.equal(runtime.host, '0.0.0.0');
+  assert.equal(runtime.accessMode, 'lan');
+  assert.equal(runtime.hosts[0], '127.0.0.1');
+  const base = `http://127.0.0.1:${runtime.port}`;
+  assert.equal((await fetch(`${base}/api/summary?range=all`)).status, 401);
+  const response = await fetch(`${base}/api/summary?range=all`, { headers: { 'X-Dashboard-Token': runtime.token } });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.access.mode, 'lan');
+  assert.equal(payload.access.bindHost, '0.0.0.0');
+  assert.equal(payload.access.hosts[0], '127.0.0.1');
   await fetch(`${base}/api/shutdown`, { method: 'POST', headers: { 'X-Dashboard-Token': runtime.token } });
   await waitForExit(child);
 });

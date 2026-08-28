@@ -27,6 +27,13 @@
     </section>
     <section id="error-banner" class="banner error hidden" role="alert"></section>
     <section id="import-banner" class="banner info hidden">正在后台导入 Codex 历史日志，数据会逐步出现。</section>
+    <section id="access-panel" class="access-panel panel hidden" aria-labelledby="access-title">
+      <div class="panel-heading"><div><p class="eyebrow">BROWSER ACCESS</p><h2 id="access-title">浏览器访问凭证</h2></div><span id="access-mode-badge" class="status-pill version-pill">仅本机</span></div>
+      <div id="lan-warning" class="banner warning hidden" role="alert">当前服务监听所有 IPv4 接口。持有下方地址或 Token 的局域网设备可以读取派生指标和任务摘录；连接未使用 TLS。</div>
+      <div class="credential-row"><span>当前 Token</span><code id="access-token"></code><button class="button secondary" type="button" data-action="copy-token">复制 Token</button></div>
+      <div id="access-urls" class="access-urls"></div>
+      <p id="copy-feedback" class="copy-feedback" role="status" aria-live="polite"></p>
+    </section>
 
     <nav class="tabs" aria-label="分析视图" role="tablist">
       <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="overview">概览</button>
@@ -34,6 +41,7 @@
       <button class="tab" type="button" role="tab" aria-selected="false" data-tab="tools">工具与智能体</button>
       <button class="tab" type="button" role="tab" aria-selected="false" data-tab="context">上下文健康</button>
       <button class="tab" type="button" role="tab" aria-selected="false" data-tab="tasks">任务</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" data-tab="metrics">指标说明</button>
     </nav>
 
     <section class="tab-panel active" data-panel="overview" role="tabpanel">
@@ -64,11 +72,24 @@
 
     <section class="tab-panel" data-panel="tasks" role="tabpanel"><section class="section"><div class="section-heading"><div><p class="eyebrow">TASKS</p><h2>任务与消息轮次</h2></div><span id="task-count" class="muted">0 个任务</span></div><div id="task-list" class="task-list"><div class="empty-state">正在读取本地指标…</div></div></section></section>
 
+    <section class="tab-panel" data-panel="metrics" role="tabpanel">
+      <section class="section"><div class="section-heading"><div><p class="eyebrow">METRIC GLOSSARY</p><h2>指标说明与统计口径</h2></div><span class="muted">缺失字段显示不可用，不进行猜测</span></div>
+        <div class="glossary-grid">
+          <article class="panel glossary-card"><h3>耗时与分位数</h3><dl><dt>轮次耗时</dt><dd>从任务开始到完成、中止或当前时刻的墙钟时间。</dd><dt>TTFT</dt><dd>Time to First Token，从轮次开始到首个 Token。Codex 未提供明确字段时，使用首个非输入阶段并标记为“估算”。</dd><dt>P50 / P95</dt><dd>分别有 50% / 95% 样本不超过该值；只统计具备完整耗时的已完成轮次。</dd><dt>阶段分布</dt><dd>接收、推理、工具、中间回复、最终回复与其他开销按时间区间去重分配，避免重叠时重复计时。</dd></dl></article>
+          <article class="panel glossary-card"><h3>Token 与占比</h3><dl><dt>总 Token</dt><dd>优先使用 Codex 报告的总数；字段缺失时为输入 Token 加输出 Token。</dd><dt>输入 / 输出</dt><dd>输入包含发送给模型的上下文；输出包含模型生成内容，推理输出是输出的子集。</dd><dt>推理占比</dt><dd>推理输出 Token ÷ 输出 Token。</dd><dt>平均 Token</dt><dd>当前筛选条件下各轮次总 Token 的算术平均值。</dd></dl></article>
+          <article class="panel glossary-card"><h3>缓存效率</h3><dl><dt>缓存输入</dt><dd>输入 Token 中由缓存命中的子集。</dd><dt>未缓存输入</dt><dd>输入 Token − 缓存输入 Token，最小为 0。</dd><dt>缓存写入</dt><dd>Codex 明确报告的新写入缓存 Token，不从其他字段推算。</dd><dt>缓存命中率</dt><dd>缓存输入 Token ÷ 输入 Token。</dd></dl></article>
+          <article class="panel glossary-card"><h3>上下文健康</h3><dl><dt>上下文峰值</dt><dd>轮次内最大上下文输入 ÷ 模型上下文窗口。</dd><dt>预警 / 危险</dt><dd>峰值达到 70% 为预警，达到 85% 为危险；这是面板启发式阈值，并非 Codex 官方限额。</dd><dt>上下文压缩</dt><dd>日志中明确识别到的压缩阶段及其耗时。</dd></dl></article>
+          <article class="panel glossary-card"><h3>并发与可靠性</h3><dl><dt>当前 / 峰值并发</dt><dd>同时处于运行区间的任务数，以及筛选范围内的最大值。</dd><dt>重叠轮次比例</dt><dd>与至少另一个轮次发生时间重叠的轮次数 ÷ 有有效区间的轮次数。</dd><dt>完成率</dt><dd>已完成 ÷（已完成 + 已中止 + 不完整）；运行中不进入分母。</dd></dl></article>
+          <article class="panel glossary-card"><h3>工具、智能体与额度</h3><dl><dt>工具失败率</dt><dd>明确归一化为失败的调用 ÷ 明确成功或失败的调用；未知状态不进入分母。</dd><dt>累计工具时长</dt><dd>各工具阶段耗时之和，可能包含并行重叠。</dd><dt>智能体重叠率</dt><dd>匿名化智能体活动区间的并行重叠程度，不估算反事实节省时间。</dd><dt>订阅使用量</dt><dd>Codex 最近一次明确提供的额度窗口快照，不代表账单或费用估算。</dd></dl></article>
+        </div>
+      </section>
+    </section>
+
     <details class="diagnostics panel"><summary>兼容性诊断 <span id="diagnostic-count" class="badge neutral">0</span></summary><div id="diagnostics-content" class="diagnostics-content"><p class="muted">没有未知事件。</p></div></details>
     <footer><span>只读扫描 Codex 会话日志 · 数据仅保存在本机</span><span id="source-count">0 个日志源</span></footer>
   </main>
 
   <dialog id="turn-dialog"><div class="dialog-head"><div><p class="eyebrow">TURN DETAILS</p><h2 id="dialog-title">轮次详情</h2></div><button id="close-dialog" class="icon-button" type="button" aria-label="关闭">×</button></div><div id="dialog-body"></div></dialog>
-  <div id="auth-screen" class="auth-screen hidden"><div class="auth-card"><img src="/logo.svg" alt="" width="52" height="52"><h2>缺少本地访问令牌</h2><p>请通过 Codex 插件的“打开效率与健康度分析面板”启动此页面，不要直接复制不含令牌的地址。</p></div></div>
+  <div id="auth-screen" class="auth-screen hidden"><div class="auth-card"><img src="/logo.svg" alt="" width="52" height="52"><h2>缺少本地访问令牌</h2><p>请通过 Codex 插件启动面板，或从已认证页面复制包含令牌的完整浏览器访问地址。</p></div></div>
 </body>
 </html>

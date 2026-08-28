@@ -13,7 +13,8 @@
 - 汇总 Codex 明确提供的安全工具名称与类别、标准化失败、匿名化多智能体活动、并发和工作模式。
 - 使用明确标注的 70% 预警、85% 危险启发式阈值分析上下文压力和压缩。
 - 按时间、项目、模型、推理强度、状态和工作模式筛选。
-- HTTP 服务只监听本机 `127.0.0.1`。
+- 提供完整指标说明、可见 Token 和可复制的普通浏览器访问地址。
+- 默认只监听本机 `127.0.0.1`；确认后可监听 `0.0.0.0` 供局域网访问。
 - 支持 Windows、macOS 和 Linux。
 
 ## 环境要求
@@ -43,6 +44,27 @@ codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
 - `打开 Codex 效率与健康度分析面板`
 - `查看最近 7 天的 Codex 效率与健康指标`
 - `停止 Codex 效率与健康度分析面板服务`
+
+打开面板时，如果提示选择访问范围：
+
+- “仅本机”只允许当前电脑访问，是默认和推荐选项。
+- “允许局域网”监听所有 IPv4 接口。任何能够连接此电脑并持有访问 URL 或 Token 的设备都能读取派生指标和任务摘录；连接使用 HTTP，不提供 TLS，也不会自动配置防火墙。
+
+也可以从终端显式选择模式：
+
+```powershell
+# Windows
+./plugins/codex-telemetry-dashboard/scripts/launcher.ps1 --access=local
+./plugins/codex-telemetry-dashboard/scripts/launcher.ps1 --access=lan
+```
+
+```sh
+# macOS / Linux
+sh plugins/codex-telemetry-dashboard/scripts/launcher.sh --access=local
+sh plugins/codex-telemetry-dashboard/scripts/launcher.sh --access=lan
+```
+
+交互式终端省略 `--access` 时会提示选择；非交互环境安全回退为 `local`。启动后，已认证面板会直接显示当前 Token 和所有可复制的访问地址。
 
 Codex 官方支持使用 GitHub 仓库、Git URL 或本地目录作为 Marketplace 来源，详见 [OpenAI 官方插件打包文档](https://developers.openai.com/plugins/build/plugins)。
 

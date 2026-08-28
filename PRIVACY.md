@@ -30,7 +30,9 @@ Set `CODEX_TELEMETRY_DATA_DIR` to override the data directory for testing or con
 
 ## Data transmission
 
-The dashboard server listens on `127.0.0.1` and serves the browser UI locally. The plugin code does not transmit collected data to the repository owner or another external service.
+The dashboard server listens on `127.0.0.1` by default. If the user explicitly selects LAN access, it listens on `0.0.0.0`, making the authenticated dashboard reachable through the host's IPv4 network interfaces. LAN connections use HTTP without TLS; any reachable device with the current per-process Token can read derived metrics and task excerpts. The plugin does not configure firewall rules or publish the service through a relay.
+
+The plugin code does not upload collected data to the repository owner or another analytics service. Any LAN transfer is initiated by a browser connecting directly to the user's computer after LAN mode is selected.
 
 ## Removing data
 

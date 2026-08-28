@@ -8,12 +8,29 @@ import { fileURLToPath } from 'node:url';
 
 const testRoot = dirname(fileURLToPath(import.meta.url));
 const launcherPath = join(testRoot, '..', 'scripts', 'launcher.mjs');
+const launcherPowerShellPath = join(testRoot, '..', 'scripts', 'launcher.ps1');
 const stopPath = join(testRoot, '..', 'scripts', 'stop.mjs');
 const legacyServerPath = join(testRoot, 'fixtures', 'legacy-server.mjs');
 
-function runNode(script, env) {
+function runNode(script, env, args = []) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [script], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(process.execPath, [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0 ? resolvePromise(JSON.parse(stdout)) : reject(new Error(stderr || `exit ${code}`)));
+  });
+}
+
+function runPowerShell(script, env, args = []) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -65,16 +82,51 @@ test('cross-platform Node launcher starts, reuses, and stops one detached servic
   runtime = JSON.parse(await readFile(join(dataRoot, 'runtime.json'), 'utf8'));
   const second = await runNode(launcherPath, env);
   assert.equal(first.reused, false);
-  assert.equal(first.version, '1.2.1');
+  assert.equal(first.version, '1.3.0');
   assert.equal(second.reused, true);
-  assert.equal(second.version, '1.2.1');
+  assert.equal(second.version, '1.3.0');
   assert.equal(second.pid, first.pid);
-  assert.equal(runtime.version, '1.2.1');
+  assert.equal(runtime.version, '1.3.0');
   assert.equal(new URL(first.url).hostname, '127.0.0.1');
+  assert.equal(first.accessMode, 'local');
+  assert.deepEqual(first.urls, [first.url]);
+
+  const lan = await runNode(launcherPath, env, ['--access=lan']);
+  runtime = JSON.parse(await readFile(join(dataRoot, 'runtime.json'), 'utf8'));
+  assert.equal(lan.reused, false, 'changing access mode restarts the service');
+  assert.notEqual(lan.pid, first.pid);
+  assert.equal(lan.accessMode, 'lan');
+  assert.equal(runtime.host, '0.0.0.0');
+  assert.equal(runtime.accessMode, 'lan');
+  assert.equal(new URL(lan.url).hostname, '127.0.0.1');
+  assert.ok(lan.urls.length >= 1);
+
+  const reusedLan = await runNode(launcherPath, env, ['--access', 'lan']);
+  assert.equal(reusedLan.reused, true);
+  assert.equal(reusedLan.pid, lan.pid);
 
   const stopped = await runNode(stopPath, env);
   assert.equal(stopped.stopped, true);
-  assert.equal(stopped.pid, first.pid);
+  assert.equal(stopped.pid, lan.pid);
+  runtime = null;
+});
+
+test('Windows PowerShell wrapper forwards the explicit access option', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-telemetry-powershell-'));
+  const dataRoot = join(root, 'data');
+  const codexHome = join(root, '.codex');
+  await mkdir(join(codexHome, 'sessions'), { recursive: true });
+  const env = { ...process.env, CODEX_BUNDLED_NODE: process.execPath, CODEX_TELEMETRY_DATA_DIR: dataRoot, CODEX_HOME: codexHome };
+  let runtime = null;
+  t.after(async () => {
+    if (runtime) { try { process.kill(runtime.pid, 'SIGTERM'); } catch { /* already stopped */ } }
+    await rm(root, { recursive: true, force: true });
+  });
+  const launched = await runPowerShell(launcherPowerShellPath, env, ['--access=local']);
+  runtime = JSON.parse(await readFile(join(dataRoot, 'runtime.json'), 'utf8'));
+  assert.equal(launched.accessMode, 'local');
+  assert.equal(runtime.host, '127.0.0.1');
+  await runNode(stopPath, env);
   runtime = null;
 });
 
@@ -97,9 +149,9 @@ test('launcher replaces a healthy legacy service that does not report a version'
   await waitForExit(legacy);
   runtime = await waitForRuntime(join(dataRoot, 'runtime.json'));
   assert.equal(launched.reused, false);
-  assert.equal(launched.version, '1.2.1');
+  assert.equal(launched.version, '1.3.0');
   assert.notEqual(launched.pid, legacyRuntime.pid);
-  assert.equal(runtime.version, '1.2.1');
+  assert.equal(runtime.version, '1.3.0');
 
   await runNode(stopPath, env);
   runtime = null;

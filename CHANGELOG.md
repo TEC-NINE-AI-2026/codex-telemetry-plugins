@@ -2,6 +2,14 @@
 
 All notable changes to this repository are documented here.
 
+## 1.3.0 - 2026-08-28
+
+- Add a dedicated metric glossary covering latency, TTFT, Token, cache, context, concurrency, reliability, tool, agent, and allowance definitions.
+- Add explicit local or LAN startup modes, authenticated browser-access URLs, and in-dashboard Token copying with LAN exposure warnings.
+- Restart a healthy same-version service when the requested access mode changes.
+- Replace percentage-sized latency, concurrency, cache, and context bars with deterministic SVG geometry so data remains visible across hidden tabs and embedded browsers.
+- Add geometry, access-mode, LAN authentication, and launcher lifecycle regression coverage.
+
 ## 1.2.1 - 2026-08-28
 
 - Preserve expanded historical turn rows while unrelated live tasks update, and refresh task details only when that task changes.

@@ -1,4 +1,12 @@
-import { taskCacheNeedsRefresh, taskRevision, waterfallTimeline } from './dashboard-state.mjs';
+import {
+  cacheChartGeometry,
+  concurrencyChartGeometry,
+  contextChartGeometry,
+  latencyChartGeometry,
+  taskCacheNeedsRefresh,
+  taskRevision,
+  waterfallTimeline,
+} from './dashboard-state.mjs';
 
 const tokenFromHash = new URLSearchParams(location.hash.slice(1)).get('token');
 if (tokenFromHash) {
@@ -20,6 +28,7 @@ const state = {
   refreshQueued: false,
   refreshTimer: null,
   activeTab: 'overview',
+  accessCopies: [],
   filters: { range: '7d', project: '', model: '', effort: '', status: '', mode: '' },
 };
 
@@ -167,11 +176,47 @@ function render() {
   renderContext(analytics);
   renderTasks(state.tasks);
   renderDiagnostics(summary.diagnostics);
+  renderAccess(summary.access);
   updateSelect('#project-filter', summary.filters.projects, '全部项目');
   updateSelect('#model-filter', summary.filters.models, '全部模型');
   updateSelect('#effort-filter', summary.filters.efforts, '全部强度');
   updateSelect('#status-filter', summary.filters.statuses.map((value) => ({ value, label: statusLabel(value) })), '全部状态');
   updateSelect('#mode-filter', summary.filters.modes.map((value) => ({ value, label: modeLabel(value) })), '全部模式');
+}
+
+function renderAccess(access) {
+  const panel = $('#access-panel');
+  if (!accessToken || !access) { panel.classList.add('hidden'); return; }
+  const hosts = Array.isArray(access.hosts) && access.hosts.length ? access.hosts : ['127.0.0.1'];
+  const urls = hosts.map((host) => `http://${host}:${location.port}/#token=${encodeURIComponent(accessToken)}`);
+  state.accessCopies = [accessToken, ...urls];
+  panel.classList.remove('hidden');
+  $('#access-token').textContent = accessToken;
+  $('#access-mode-badge').textContent = access.mode === 'lan' ? '局域网访问' : '仅本机';
+  $('#lan-warning').classList.toggle('hidden', access.mode !== 'lan');
+  $('#access-urls').innerHTML = urls.map((url, index) => `<div class="credential-row"><span>${index === 0 ? '本机地址' : `局域网地址 ${index}`}</span><code>${escapeHtml(url)}</code><button class="button secondary" type="button" data-action="copy-access" data-copy-index="${index + 1}">复制地址</button></div>`).join('');
+}
+
+async function copyAccessValue(index, label) {
+  const value = state.accessCopies[index];
+  if (!value) return;
+  const feedback = $('#copy-feedback');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+    else {
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', '');
+      textarea.className = 'clipboard-fallback';
+      document.body.append(textarea);
+      textarea.select();
+      if (!document.execCommand('copy')) throw new Error('copy unavailable');
+      textarea.remove();
+    }
+    feedback.textContent = `${label}已复制。`;
+  } catch {
+    feedback.textContent = `无法自动复制，请直接选择上方${label}。`;
+  }
 }
 
 function renderActive(active) {
@@ -225,9 +270,13 @@ function renderLatencyChart(trend) {
   const container = $('#latency-chart');
   const rows = trend.filter((entry) => Number.isFinite(entry.durationMs)).slice(-36);
   if (!rows.length) { container.innerHTML = empty('没有完整的耗时数据'); return; }
-  const max = Math.max(...rows.map((entry) => entry.durationMs), 1);
   const keys = ['receive', 'reasoning', 'tool', 'commentary', 'final', 'other'];
-  container.innerHTML = `<div class="timeline-bars">${rows.map((entry) => `<div class="timeline-row" title="${escapeHtml(`${entry.title} · ${formatDuration(entry.durationMs)}`)}"><span>${escapeHtml(formatDate(entry.receivedAtMs, false))}</span><div class="stacked-track" style="width:${Math.max(4, entry.durationMs / max * 100)}%">${keys.map((key) => `<i class="bar-${key}" style="width:${entry.durationMs ? (entry.stageDurations[key] || 0) / entry.durationMs * 100 : 0}%"></i>`).join('')}</div></div>`).join('')}</div>`;
+  const geometry = latencyChartGeometry(rows);
+  const tracks = geometry.rows.map(({ entry, y, barHeight, trackWidth, segments }) => {
+    const bars = segments.filter((segment) => segment.width > 0).map((segment) => `<rect class="bar-${escapeHtml(segment.kind)}" x="${segment.x.toFixed(2)}" y="${y.toFixed(2)}" width="${segment.width.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="1.5"><title>${escapeHtml(`${stageLabel(segment.kind)} · ${formatDuration(segment.durationMs)}`)}</title></rect>`).join('');
+    return `<text class="chart-axis latency-label" x="0" y="${(y + barHeight).toFixed(2)}">${escapeHtml(formatDate(entry.receivedAtMs, false))}</text><rect class="chart-track" x="${geometry.labelWidth}" y="${y.toFixed(2)}" width="${Math.max(1, trackWidth).toFixed(2)}" height="${barHeight.toFixed(2)}" rx="1.5"></rect>${bars}`;
+  }).join('');
+  container.innerHTML = `<svg class="latency-svg" viewBox="0 0 ${geometry.width} ${geometry.height}" preserveAspectRatio="none" role="img" aria-label="最近轮次耗时与阶段分布">${tracks}</svg>`;
   $('#latency-legend').innerHTML = keys.map((key) => `<span><i class="swatch ${key}"></i>${escapeHtml(stageLabel(key))}</span>`).join('');
 }
 
@@ -235,8 +284,9 @@ function renderConcurrency(concurrency) {
   $('#concurrency-summary').textContent = `峰值 ${concurrency.peak} · 重叠 ${formatPercent(concurrency.parallelTurnPercent)}`;
   const rows = concurrency.timeline.slice(-80);
   if (!rows.length) { $('#concurrency-chart').innerHTML = empty('没有可用的轮次区间'); return; }
-  const max = Math.max(concurrency.peak, 1);
-  $('#concurrency-chart').innerHTML = `<div class="column-chart">${rows.map((entry) => `<i style="height:${Math.max(3, entry.value / max * 100)}%" title="${escapeHtml(`${formatDate(entry.at)} · ${entry.value} 个并发任务`)}"></i>`).join('')}</div>`;
+  const geometry = concurrencyChartGeometry(rows, concurrency.peak);
+  const points = geometry.points.map(({ entry, x, y }) => `<circle class="concurrency-point" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.6"><title>${escapeHtml(`${formatDate(entry.at)} · ${entry.value} 个并发任务`)}</title></circle>`).join('');
+  $('#concurrency-chart').innerHTML = `<svg viewBox="0 0 ${geometry.width} ${geometry.height}" preserveAspectRatio="none" role="img" aria-label="任务并发时间线"><line class="chart-grid-line" x1="${geometry.margin.left}" x2="${geometry.width - geometry.margin.right}" y1="${geometry.baselineY}" y2="${geometry.baselineY}"></line><line class="chart-grid-line" x1="${geometry.margin.left}" x2="${geometry.width - geometry.margin.right}" y1="${geometry.peakY}" y2="${geometry.peakY}"></line><text class="chart-axis" x="3" y="${geometry.baselineY}">0</text><text class="chart-axis" x="3" y="${geometry.peakY + 9}">${geometry.peak}</text><path class="concurrency-area" d="${geometry.areaPath}"></path><path class="concurrency-line" d="${geometry.linePath}"></path>${points}</svg>`;
 }
 
 function renderBarList(rows, key, label) {
@@ -267,12 +317,8 @@ function renderEfficiency(data) {
   const matrix = data.efficiency.matrix;
   $('#efficiency-matrix').innerHTML = matrix.length ? `<div class="table-scroll"><table class="event-table"><thead><tr><th>模型</th><th>推理强度</th><th>轮次</th><th>完成率</th><th>P50</th><th>P95</th><th>TTFT P50</th><th>平均 Token</th><th>缓存命中</th><th>推理占比</th></tr></thead><tbody>${matrix.map((row) => `<tr><td><strong>${escapeHtml(row.model)}</strong></td><td>${escapeHtml(row.effort === 'unknown' ? 'Codex 未提供' : row.effort)}</td><td>${row.turns}</td><td>${formatPercent(row.completionRate)}</td><td>${formatDuration(row.durationP50)}</td><td>${formatDuration(row.durationP95)}</td><td>${formatDuration(row.ttftP50)}</td><td>${formatTokens(row.averageTokens)}</td><td>${formatPercent(row.cacheHitRate)}</td><td>${formatPercent(row.reasoningShare)}</td></tr>`).join('')}</tbody></table></div>` : empty('没有可比较的模型数据');
   const trend = data.cache.trend.slice(-48);
-  const max = Math.max(...trend.map((entry) => entry.inputTokens + entry.cacheWriteInputTokens), 1);
-  $('#cache-chart').innerHTML = trend.length ? `<div class="column-chart cache">${trend.map((entry) => {
-    const cached = Math.min(entry.cachedInputTokens, entry.inputTokens);
-    const uncached = Math.max(0, entry.inputTokens - cached);
-    return `<div style="height:${Math.max(3, (entry.inputTokens + entry.cacheWriteInputTokens) / max * 100)}%" title="${escapeHtml(`${entry.title} · 缓存 ${formatTokens(cached)} · 未缓存 ${formatTokens(uncached)} · 写入 ${formatTokens(entry.cacheWriteInputTokens)}`)}"><i class="uncached" style="height:${entry.inputTokens ? uncached / (entry.inputTokens + entry.cacheWriteInputTokens) * 100 : 0}%"></i><i class="cached" style="height:${entry.inputTokens ? cached / (entry.inputTokens + entry.cacheWriteInputTokens) * 100 : 0}%"></i><i class="write" style="height:${entry.cacheWriteInputTokens / Math.max(1, entry.inputTokens + entry.cacheWriteInputTokens) * 100}%"></i></div>`;
-  }).join('')}</div><div class="legend"><span><i class="swatch uncached"></i>未缓存输入</span><span><i class="swatch cached"></i>缓存输入</span><span><i class="swatch write"></i>缓存写入</span></div>` : empty('没有缓存 Token 数据');
+  const geometry = cacheChartGeometry(trend);
+  $('#cache-chart').innerHTML = geometry.bars.length ? `<svg viewBox="0 0 ${geometry.width} ${geometry.height}" preserveAspectRatio="none" role="img" aria-label="缓存输入趋势"><line class="chart-grid-line" x1="${geometry.margin.left}" x2="${geometry.width - geometry.margin.right}" y1="${geometry.baselineY}" y2="${geometry.baselineY}"></line>${geometry.bars.map((bar) => bar.segments.filter((segment) => segment.height > 0).map((segment) => `<rect class="bar-cache-${escapeHtml(segment.kind)}" x="${segment.x.toFixed(2)}" y="${segment.y.toFixed(2)}" width="${segment.width.toFixed(2)}" height="${segment.height.toFixed(2)}"><title>${escapeHtml(`${bar.entry.title} · 缓存 ${formatTokens(bar.cached)} · 未缓存 ${formatTokens(bar.uncached)} · 写入 ${formatTokens(bar.write)}`)}</title></rect>`).join('')).join('')}</svg><div class="legend"><span><i class="swatch uncached"></i>未缓存输入</span><span><i class="swatch cached"></i>缓存输入</span><span><i class="swatch write"></i>缓存写入</span></div>` : empty('没有缓存 Token 数据');
   $('#cache-summary').innerHTML = `<div class="metric-stack"><div><span>输入 Token</span><strong>${formatTokens(data.cache.inputTokens)}</strong></div><div><span>缓存输入</span><strong>${formatTokens(data.cache.cachedInputTokens)}</strong></div><div><span>缓存写入</span><strong>${formatTokens(data.cache.cacheWriteInputTokens)}</strong></div><div><span>命中率</span><strong>${formatPercent(data.cache.hitRate)}</strong></div></div>`;
 }
 
@@ -303,7 +349,8 @@ function renderContext(data) {
     ['压缩次数', String(context.compactions), `累计 ${formatDuration(context.compactionDurationMs)}`],
   ]);
   const trend = context.trend.filter((entry) => Number.isFinite(entry.peakPercent)).slice(-80);
-  $('#context-chart').innerHTML = trend.length ? `<div class="column-chart context">${trend.map((entry) => `<i class="${entry.peakPercent >= 85 ? 'danger' : entry.peakPercent >= 70 ? 'warning' : ''}" style="height:${Math.max(3, clamp(entry.peakPercent, 0, 100))}%" title="${escapeHtml(`${entry.title} · 峰值 ${entry.peakPercent.toFixed(1)}%${entry.compacted ? ' · 已压缩' : ''}`)}"></i>`).join('')}</div><div class="threshold-labels"><span>70% 预警</span><span>85% 危险</span></div>` : empty('Codex 未提供上下文窗口数据');
+  const geometry = contextChartGeometry(trend);
+  $('#context-chart').innerHTML = geometry.bars.length ? `<svg viewBox="0 0 ${geometry.width} ${geometry.height}" preserveAspectRatio="none" role="img" aria-label="上下文峰值趋势"><line class="chart-threshold warning" x1="${geometry.margin.left}" x2="${geometry.width - geometry.margin.right}" y1="${geometry.warningY}" y2="${geometry.warningY}"></line><line class="chart-threshold danger" x1="${geometry.margin.left}" x2="${geometry.width - geometry.margin.right}" y1="${geometry.dangerY}" y2="${geometry.dangerY}"></line><text class="chart-axis" x="2" y="${geometry.warningY + 4}">70%</text><text class="chart-axis" x="2" y="${geometry.dangerY + 4}">85%</text>${geometry.bars.map((bar) => `<rect class="context-bar ${bar.tone}" x="${bar.x.toFixed(2)}" y="${bar.y.toFixed(2)}" width="${bar.width.toFixed(2)}" height="${bar.height.toFixed(2)}"><title>${escapeHtml(`${bar.entry.title} · 峰值 ${bar.entry.peakPercent.toFixed(1)}%${bar.entry.compacted ? ' · 已压缩' : ''}`)}</title></rect>`).join('')}<path class="context-line" d="${geometry.linePath}" fill="none"></path></svg><div class="threshold-labels"><span>70% 预警</span><span>85% 危险</span></div>` : empty('Codex 未提供上下文窗口数据');
   $('#compaction-summary').innerHTML = context.compactions ? `<div class="metric-stack"><div><span>压缩次数</span><strong>${context.compactions}</strong></div><div><span>累计压缩耗时</span><strong>${formatDuration(context.compactionDurationMs)}</strong></div><div><span>平均压缩耗时</span><strong>${formatDuration(context.compactionDurationMs / context.compactions)}</strong></div></div>` : empty('没有识别到上下文压缩阶段');
 }
 
@@ -481,6 +528,8 @@ document.addEventListener('click', (event) => {
   const tab = event.target.closest('[data-tab]');
   if (tab) return switchTab(tab.dataset.tab);
   const action = event.target.closest('[data-action]');
+  if (action?.dataset.action === 'copy-token') return copyAccessValue(0, 'Token');
+  if (action?.dataset.action === 'copy-access') return copyAccessValue(Number(action.dataset.copyIndex), '访问地址');
   if (action?.dataset.action === 'toggle-task') return toggleTask(action.dataset.thread);
   if (action?.dataset.action === 'open-turn') return openTurn(action.dataset.thread, action.dataset.turn);
 });

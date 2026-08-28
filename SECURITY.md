@@ -12,8 +12,10 @@ Include the affected version, operating system, reproduction steps, expected imp
 
 ## Security design
 
-- The HTTP server binds only to `127.0.0.1`.
+- The HTTP server binds to `127.0.0.1` by default. Explicit LAN mode binds `0.0.0.0` and exposes the service on every IPv4 interface.
 - API requests require a randomly generated per-process token.
+- The authenticated dashboard displays the raw Token and complete access URLs so the user can copy them into another browser.
+- LAN mode uses HTTP without TLS and does not configure the operating-system firewall. Anyone who can reach the host and obtains the Token can read derived metrics and task excerpts.
 - The dashboard does not upload telemetry or contact a remote analytics service.
 - The collector does not read Codex authentication files.
 - Reasoning text, tool commands, tool arguments, tool outputs, error bodies, raw agent identifiers, and unknown payload content are excluded from the derived database.

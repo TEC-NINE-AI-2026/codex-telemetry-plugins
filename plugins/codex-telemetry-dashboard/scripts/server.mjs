@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { accessHosts, bindHostForAccessMode, normalizeAccessMode } from './access-mode.mjs';
 import { TelemetryCollector, TelemetryStore } from './telemetry-core.mjs';
 import { resolveDataRoot } from './platform-paths.mjs';
 
@@ -14,7 +15,10 @@ const dataRoot = resolveDataRoot();
 const databasePath = process.env.CODEX_TELEMETRY_DB || join(dataRoot, 'metrics.sqlite');
 const runtimePath = join(dataRoot, 'runtime.json');
 const token = randomBytes(24).toString('base64url');
-const host = '127.0.0.1';
+const accessMode = normalizeAccessMode(process.env.CODEX_TELEMETRY_ACCESS_MODE, 'local');
+const host = bindHostForAccessMode(accessMode);
+const hosts = accessHosts(accessMode);
+const accessInfo = { mode: accessMode, bindHost: host, hosts };
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 const version = typeof manifest.version === 'string' && manifest.version.trim() ? manifest.version.trim() : null;
 if (!version) throw new Error('Plugin manifest version is required.');
@@ -107,7 +111,7 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 200, { ok: true, pid: process.pid, importing: collector.importing, version });
       }
       if (request.method === 'GET' && url.pathname === '/api/summary') {
-        return sendJson(response, 200, { ...store.summary(filtersFrom(url), { importing: collector.importing }), version });
+        return sendJson(response, 200, { ...store.summary(filtersFrom(url), { importing: collector.importing }), version, access: accessInfo });
       }
       if (request.method === 'GET' && url.pathname === '/api/analytics') {
         return sendJson(response, 200, store.analytics(filtersFrom(url)));
@@ -169,7 +173,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(0, host, async () => {
   const address = server.address();
-  const runtime = { pid: process.pid, host, port: address.port, token, version, startedAtMs: Date.now(), databasePath };
+  const runtime = { pid: process.pid, host, hosts, accessMode, port: address.port, token, version, startedAtMs: Date.now(), databasePath };
   const temporary = join(dataRoot, `.runtime-${process.pid}-${randomBytes(6).toString('hex')}.json`);
   await writeFile(temporary, JSON.stringify(runtime), { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, runtimePath);

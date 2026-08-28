@@ -2,7 +2,9 @@ import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, mkdir, open, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { buildAccessUrls, normalizeAccessMode, parseAccessModeArgs } from './access-mode.mjs';
 import { resolveDataRoot, sqliteNodeFlags } from './platform-paths.mjs';
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +57,7 @@ async function waitForExit(pid, timeoutMs = 3000) {
   return !processExists(pid);
 }
 
-async function shutdownMismatched(runtime) {
+async function shutdownExisting(runtime, reason) {
   let response;
   try {
     response = await fetch(`http://127.0.0.1:${runtime.port}/api/shutdown`, {
@@ -64,27 +66,45 @@ async function shutdownMismatched(runtime) {
       signal: AbortSignal.timeout(2000),
     });
   } catch (error) {
-    throw new Error(`Running dashboard version differs and could not be stopped: ${error.message}`);
+    throw new Error(`Running dashboard ${reason} and could not be stopped: ${error.message}`);
   }
-  if (!response.ok) throw new Error(`Running dashboard version differs and rejected shutdown with HTTP ${response.status}.`);
-  if (!await waitForExit(runtime.pid)) throw new Error('Running dashboard version differs but did not exit after shutdown.');
+  if (!response.ok) throw new Error(`Running dashboard ${reason} and rejected shutdown with HTTP ${response.status}.`);
+  if (!await waitForExit(runtime.pid)) throw new Error(`Running dashboard ${reason} but did not exit after shutdown.`);
 }
 
 function result(runtime, reused, version) {
-  return { url: `http://127.0.0.1:${runtime.port}/#token=${runtime.token}`, pid: Number(runtime.pid), reused, version };
+  const accessMode = normalizeAccessMode(runtime.accessMode, runtime.host === '0.0.0.0' ? 'lan' : 'local');
+  const urls = buildAccessUrls({ mode: accessMode, port: runtime.port, token: runtime.token, hosts: runtime.hosts });
+  return { url: urls[0], urls, accessMode, pid: Number(runtime.pid), reused, version };
+}
+
+async function requestedAccessMode() {
+  const explicit = parseAccessModeArgs(process.argv.slice(2));
+  if (explicit) return explicit;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return 'local';
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = (await prompt.question('访问模式：1) 仅本机（默认）  2) 允许局域网访问。请选择 [1/2]: ')).trim().toLowerCase();
+    return ['2', 'lan', 'y', 'yes'].includes(answer) ? 'lan' : 'local';
+  } finally {
+    prompt.close();
+  }
 }
 
 async function main() {
   assertNodeVersion();
   const version = await readVersion();
+  const accessMode = await requestedAccessMode();
   const existing = await readRuntime();
   const existingHealth = await health(existing);
   if (existingHealth) {
-    if (existingHealth.version === version) {
+    const existingMode = normalizeAccessMode(existing.accessMode, existing.host === '0.0.0.0' ? 'lan' : 'local');
+    if (existingHealth.version === version && existingMode === accessMode) {
       process.stdout.write(`${JSON.stringify(result(existing, true, version))}\n`);
       return;
     }
-    await shutdownMismatched(existing);
+    const reason = existingHealth.version !== version ? 'version differs' : 'access mode differs';
+    await shutdownExisting(existing, reason);
   }
 
   await mkdir(dataRoot, { recursive: true });
@@ -96,7 +116,7 @@ async function main() {
     detached: true,
     windowsHide: true,
     stdio: ['ignore', stdout.fd, stderr.fd],
-    env: process.env,
+    env: { ...process.env, CODEX_TELEMETRY_ACCESS_MODE: accessMode },
   });
   child.unref();
   await stdout.close();

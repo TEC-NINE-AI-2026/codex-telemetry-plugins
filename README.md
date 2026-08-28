@@ -13,7 +13,8 @@ This repository is a Git-backed Codex plugin marketplace containing **Codex Effi
 - Summarizes safe tool names and categories, normalized failures, anonymized multi-agent activity, concurrency, and work modes when Codex provides them.
 - Tracks context-window pressure and compaction with explicit 70% warning and 85% danger heuristics.
 - Filters by time range, project, model, reasoning effort, task status, and work mode.
-- Runs locally and binds its HTTP server to `127.0.0.1`.
+- Includes a metric glossary, the current Token, and copyable URLs for ordinary browsers.
+- Binds to `127.0.0.1` by default and can bind `0.0.0.0` for LAN access after confirmation.
 - Supports Windows, macOS, and Linux.
 
 ## Requirements
@@ -43,6 +44,27 @@ Restart the Codex desktop app and open a new task so the installed skill is load
 - `Open the Codex efficiency and health analytics dashboard.`
 - `Show my Codex efficiency and health metrics for the last 7 days.`
 - `Stop the Codex efficiency and health analytics dashboard service.`
+
+When opening the dashboard, choose an access scope if prompted:
+
+- Local-only access binds `127.0.0.1` and is the recommended default.
+- LAN access binds every IPv4 interface. Any reachable device with the access URL or Token can read derived metrics and task excerpts over unencrypted HTTP; the plugin does not configure TLS or your firewall.
+
+You can also select the mode explicitly from a terminal:
+
+```powershell
+# Windows
+./plugins/codex-telemetry-dashboard/scripts/launcher.ps1 --access=local
+./plugins/codex-telemetry-dashboard/scripts/launcher.ps1 --access=lan
+```
+
+```sh
+# macOS / Linux
+sh plugins/codex-telemetry-dashboard/scripts/launcher.sh --access=local
+sh plugins/codex-telemetry-dashboard/scripts/launcher.sh --access=lan
+```
+
+An interactive terminal prompts when `--access` is omitted; non-interactive runs safely default to `local`. The authenticated dashboard displays the current Token and all copyable browser URLs.
 
 Codex supports GitHub repositories, Git URLs, and local directories as marketplace sources. See the [official plugin packaging documentation](https://developers.openai.com/plugins/build/plugins).
 

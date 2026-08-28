@@ -1,6 +1,3 @@
-[CmdletBinding()]
-param()
-
 $ErrorActionPreference = 'Stop'
 $candidates = @()
 if ($env:CODEX_BUNDLED_NODE) { $candidates += $env:CODEX_BUNDLED_NODE }
@@ -14,5 +11,5 @@ if (-not $nodePath) {
     $nodePath = $nodeCommand.Source
 }
 
-& $nodePath (Join-Path $PSScriptRoot 'launcher.mjs')
+& $nodePath (Join-Path $PSScriptRoot 'launcher.mjs') @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
