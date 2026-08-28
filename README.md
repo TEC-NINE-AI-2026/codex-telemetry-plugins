@@ -19,9 +19,43 @@ This repository is a Git-backed Codex plugin marketplace containing **Codex Effi
 
 ## Requirements
 
-- Codex desktop app or Codex CLI with plugin support.
-- Node.js 22.5 or newer when a compatible bundled Node.js runtime is unavailable.
 - A local Codex session history under `~/.codex` (or `CODEX_HOME`).
+- Node.js 22.5 or newer for the independent CLI. The plugin workflow can use a compatible Codex-bundled Node.js runtime.
+- Codex desktop app or Codex CLI with plugin support only when using the plugin and Skill workflow.
+
+## Run directly without Codex or an agent
+
+The independent CLI starts the same local dashboard without installing the Codex plugin or asking an agent to run the Skill. Install it from a source checkout:
+
+```sh
+git clone https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins.git
+cd codex-telemetry-plugins
+npm install -g .
+```
+
+Run `codex-telemetry` with no arguments to start the local-only service and open the authenticated dashboard in the default browser. The complete lifecycle is available from the terminal:
+
+```sh
+codex-telemetry
+codex-telemetry start --no-open
+codex-telemetry open
+codex-telemetry status
+codex-telemetry stop
+```
+
+Use `--json` with any lifecycle command for machine-readable output. LAN mode must be selected explicitly:
+
+```sh
+codex-telemetry start --access=lan
+```
+
+LAN mode listens on every IPv4 interface over unencrypted HTTP. Any reachable device with the access URL or Token can read derived metrics and task excerpts. The CLI does not configure TLS or the firewall.
+
+For development, `npm link` can replace `npm install -g .`. This source-only release is not published to the npm registry. Remove the global source installation with:
+
+```sh
+npm uninstall -g codex-telemetry-plugins-marketplace
+```
 
 ## Install from GitHub
 
@@ -50,7 +84,7 @@ When opening the dashboard, choose an access scope if prompted:
 - Local-only access binds `127.0.0.1` and is the recommended default.
 - LAN access binds every IPv4 interface. Any reachable device with the access URL or Token can read derived metrics and task excerpts over unencrypted HTTP; the plugin does not configure TLS or your firewall.
 
-You can also select the mode explicitly from a terminal:
+The platform wrappers remain available for direct compatibility and for the Skill workflow:
 
 ```powershell
 # Windows
@@ -88,6 +122,15 @@ codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
 
 ## Update
 
+Update an independent CLI source installation:
+
+```sh
+git pull
+npm install -g .
+```
+
+Update the Codex plugin installation:
+
 ```sh
 codex plugin marketplace upgrade codex-telemetry-plugins
 codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
@@ -114,7 +157,7 @@ The plugin reads local Codex session metadata and writes a derived SQLite databa
 npm run check
 ```
 
-The check validates the marketplace and plugin manifest, then runs the parser, security, platform-path, and launcher lifecycle tests. GitHub Actions runs the same suite on Windows, macOS, and Linux.
+The check validates the marketplace, plugin manifest, and CLI bin entry, then runs the parser, security, platform-path, CLI, and launcher lifecycle tests. GitHub Actions runs the same suite on Windows, macOS, and Linux.
 
 Repository layout:
 

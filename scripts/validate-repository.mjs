@@ -48,7 +48,17 @@ async function validatePlugin(entry) {
   assert(skillMetadata.name === entry.name, `${entry.name}: skill and plugin names differ.`);
   assert(skillMetadata.description?.length > 0, `${entry.name}: skill description is required.`);
   assert(!skillText.includes('[TODO:'), `${entry.name}: unfinished TODO placeholder in SKILL.md.`);
-  for (const entrypoint of ['scripts/launcher.mjs', 'scripts/launcher.ps1', 'scripts/launcher.sh', 'scripts/stop.mjs', 'scripts/stop.ps1', 'scripts/stop.sh']) {
+  for (const entrypoint of [
+    'scripts/browser-open.mjs',
+    'scripts/cli.mjs',
+    'scripts/launcher.mjs',
+    'scripts/launcher.ps1',
+    'scripts/launcher.sh',
+    'scripts/lifecycle.mjs',
+    'scripts/stop.mjs',
+    'scripts/stop.ps1',
+    'scripts/stop.sh',
+  ]) {
     await access(join(pluginRoot, entrypoint));
   }
   for (const assetField of ['composerIcon', 'logo', 'logoDark']) {
@@ -63,4 +73,9 @@ assert(/^[A-Za-z0-9_-]+$/u.test(marketplace.name), 'Invalid marketplace name.');
 assert(typeof marketplace.interface?.displayName === 'string', 'Marketplace interface.displayName is required.');
 assert(Array.isArray(marketplace.plugins) && marketplace.plugins.length > 0, 'Marketplace must contain at least one plugin.');
 for (const entry of marketplace.plugins) await validatePlugin(entry);
+const rootPackage = await readJson(join(repositoryRoot, 'package.json'));
+const primaryPlugin = await readJson(join(repositoryRoot, marketplace.plugins[0].source.path, '.codex-plugin', 'plugin.json'));
+assert(rootPackage.version === primaryPlugin.version, 'Root package and primary plugin versions differ.');
+assert(rootPackage.bin?.['codex-telemetry'] === './plugins/codex-telemetry-dashboard/scripts/cli.mjs', 'Root package must expose the codex-telemetry CLI.');
+await access(join(repositoryRoot, rootPackage.bin['codex-telemetry']));
 process.stdout.write(`validated marketplace ${marketplace.name}\n`);

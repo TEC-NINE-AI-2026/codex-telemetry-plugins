@@ -19,9 +19,43 @@
 
 ## 环境要求
 
-- 支持插件的 Codex 桌面应用或 Codex CLI。
-- 如果本机没有可用的 Codex 内置 Node.js，需要安装 Node.js 22.5 或更高版本。
 - 本机存在 `~/.codex`（或 `CODEX_HOME`）下的 Codex 会话记录。
+- 独立 CLI 需要 Node.js 22.5 或更高版本；插件工作流也可以使用兼容的 Codex 内置 Node.js。
+- 只有使用插件和 Skill 工作流时，才需要支持插件的 Codex 桌面应用或 Codex CLI。
+
+## 不通过 Codex 或 Agent 直接运行
+
+独立 CLI 会启动同一个本地面板，不需要安装 Codex 插件，也不需要让 Agent 执行 Skill。先从源码安装：
+
+```sh
+git clone https://github.com/TEC-NINE-AI-2026/codex-telemetry-plugins.git
+cd codex-telemetry-plugins
+npm install -g .
+```
+
+直接运行 `codex-telemetry` 会以仅本机模式启动服务，并在系统默认浏览器中打开已认证面板。完整生命周期命令如下：
+
+```sh
+codex-telemetry
+codex-telemetry start --no-open
+codex-telemetry open
+codex-telemetry status
+codex-telemetry stop
+```
+
+所有生命周期命令都支持 `--json` 机器可读输出。局域网模式必须显式指定：
+
+```sh
+codex-telemetry start --access=lan
+```
+
+局域网模式会通过未加密 HTTP 监听全部 IPv4 接口。任何能够连接此电脑并持有访问 URL 或 Token 的设备都能读取派生指标和任务摘录；CLI 不会配置 TLS 或防火墙。
+
+开发时可使用 `npm link` 替代 `npm install -g .`。当前版本仅支持源码安装，不发布到 npm Registry。移除全局源码安装：
+
+```sh
+npm uninstall -g codex-telemetry-plugins-marketplace
+```
 
 ## 从 GitHub 安装
 
@@ -50,7 +84,7 @@ codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
 - “仅本机”只允许当前电脑访问，是默认和推荐选项。
 - “允许局域网”监听所有 IPv4 接口。任何能够连接此电脑并持有访问 URL 或 Token 的设备都能读取派生指标和任务摘录；连接使用 HTTP，不提供 TLS，也不会自动配置防火墙。
 
-也可以从终端显式选择模式：
+平台启动脚本仍作为直接兼容入口和 Skill 工作流入口保留：
 
 ```powershell
 # Windows
@@ -90,6 +124,15 @@ codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
 
 ## 更新
 
+更新独立 CLI 的源码安装：
+
+```sh
+git pull
+npm install -g .
+```
+
+更新 Codex 插件安装：
+
 ```sh
 codex plugin marketplace upgrade codex-telemetry-plugins
 codex plugin add codex-telemetry-dashboard@codex-telemetry-plugins
@@ -116,7 +159,7 @@ codex plugin marketplace remove codex-telemetry-plugins
 npm run check
 ```
 
-该命令会校验 Marketplace 与插件清单，并运行解析、隐私安全、平台路径和启动生命周期测试。GitHub Actions 会在 Windows、macOS 和 Linux 上运行同一套检查。
+该命令会校验 Marketplace、插件清单和 CLI bin 入口，并运行解析、隐私安全、平台路径、CLI 和启动生命周期测试。GitHub Actions 会在 Windows、macOS 和 Linux 上运行同一套检查。
 
 仓库结构：
 

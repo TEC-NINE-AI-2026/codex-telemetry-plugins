@@ -2,6 +2,14 @@
 
 All notable changes to this repository are documented here.
 
+## 1.4.0 - 2026-08-28
+
+- Add the source-installable `codex-telemetry` CLI with start, open, status, and stop commands, human-readable output, and stable JSON output.
+- Open the authenticated dashboard in the system browser by default while supporting local-only startup with `--no-open` for automation.
+- Share one lifecycle implementation across the CLI, Node entrypoints, and platform wrappers while keeping status checks read-only.
+- Add CLI parsing, browser adapter, source-package metadata, stale-runtime, and cross-process lifecycle regression coverage.
+- Derive CI version expectations from the plugin manifest instead of maintaining a hard-coded version.
+
 ## 1.3.0 - 2026-08-28
 
 - Add a dedicated metric glossary covering latency, TTFT, Token, cache, context, concurrency, reliability, tool, agent, and allowance definitions.

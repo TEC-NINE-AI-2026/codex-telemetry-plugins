@@ -34,6 +34,14 @@ jobs:
           set -eu
           sh -n plugins/codex-telemetry-dashboard/scripts/launcher.sh
           sh -n plugins/codex-telemetry-dashboard/scripts/stop.sh
+          expected_version=$(node -p "require('./plugins/codex-telemetry-dashboard/.codex-plugin/plugin.json').version")
+
+          npm install --global --prefix "$PWD/.codex-smoke/global" . >/dev/null
+          installed_version=$("$PWD/.codex-smoke/global/bin/codex-telemetry" --version)
+          if [ "$installed_version" != "$expected_version" ]; then
+            echo "Unexpected source-installed CLI version: $installed_version" >&2
+            exit 1
+          fi
 
           test_root=$(mktemp -d)
           export CODEX_TELEMETRY_DATA_DIR="$test_root/data with spaces"
@@ -50,13 +58,13 @@ jobs:
 
           first=$(sh plugins/codex-telemetry-dashboard/scripts/launcher.sh)
           second=$(sh plugins/codex-telemetry-dashboard/scripts/launcher.sh)
-          FIRST_RESULT="$first" SECOND_RESULT="$second" node <<'NODE'
+          FIRST_RESULT="$first" SECOND_RESULT="$second" EXPECTED_VERSION="$expected_version" node <<'NODE'
           const first = JSON.parse(process.env.FIRST_RESULT);
           const second = JSON.parse(process.env.SECOND_RESULT);
-          if (first.reused !== false || first.version !== '1.2.1') {
+          if (first.reused !== false || first.version !== process.env.EXPECTED_VERSION) {
             throw new Error(`Unexpected first launch result: ${process.env.FIRST_RESULT}`);
           }
-          if (second.reused !== true || second.version !== '1.2.1' || second.pid !== first.pid) {
+          if (second.reused !== true || second.version !== process.env.EXPECTED_VERSION || second.pid !== first.pid) {
             throw new Error(`Unexpected reused launch result: ${process.env.SECOND_RESULT}`);
           }
           NODE
@@ -68,9 +76,36 @@ jobs:
             throw new Error(`Unexpected stop result: ${process.env.STOP_RESULT}`);
           }
           NODE
+
+          cli_started=$(node plugins/codex-telemetry-dashboard/scripts/cli.mjs start --no-open --json)
+          cli_status=$(node plugins/codex-telemetry-dashboard/scripts/cli.mjs status --json)
+          CLI_STARTED="$cli_started" CLI_STATUS="$cli_status" EXPECTED_VERSION="$expected_version" node <<'NODE'
+          const started = JSON.parse(process.env.CLI_STARTED);
+          const status = JSON.parse(process.env.CLI_STATUS);
+          if (started.opened !== false || started.version !== process.env.EXPECTED_VERSION) {
+            throw new Error(`Unexpected CLI start result: ${process.env.CLI_STARTED}`);
+          }
+          if (status.running !== true || status.pid !== started.pid || status.version !== process.env.EXPECTED_VERSION) {
+            throw new Error(`Unexpected CLI status result: ${process.env.CLI_STATUS}`);
+          }
+          NODE
+
+          cli_stopped=$(node plugins/codex-telemetry-dashboard/scripts/cli.mjs stop --json)
+          CLI_STOPPED="$cli_stopped" node <<'NODE'
+          const stopped = JSON.parse(process.env.CLI_STOPPED);
+          if (stopped.stopped !== true || !Number.isInteger(stopped.pid)) {
+            throw new Error(`Unexpected CLI stop result: ${process.env.CLI_STOPPED}`);
+          }
+          NODE
       - name: Validate PowerShell entrypoints
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           [scriptblock]::Create((Get-Content -Raw plugins/codex-telemetry-dashboard/scripts/launcher.ps1)) | Out-Null
           [scriptblock]::Create((Get-Content -Raw plugins/codex-telemetry-dashboard/scripts/stop.ps1)) | Out-Null
+          $expectedVersion = (Get-Content -Raw plugins/codex-telemetry-dashboard/.codex-plugin/plugin.json | ConvertFrom-Json).version
+          npm install --global --prefix .codex-smoke/global . | Out-Null
+          $installedVersion = (& ./.codex-smoke/global/codex-telemetry.cmd --version).Trim()
+          if ($installedVersion -ne $expectedVersion) {
+            throw "Unexpected source-installed CLI version: $installedVersion"
+          }

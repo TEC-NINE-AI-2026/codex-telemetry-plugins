@@ -17,6 +17,18 @@ git push -u origin main
 
 ## 干净环境验收
 
+先在仓库根目录验证独立 CLI 源码安装：
+
+```sh
+npm install -g .
+codex-telemetry start --no-open
+codex-telemetry status
+codex-telemetry stop
+npm uninstall -g codex-telemetry-plugins-marketplace
+```
+
+独立 CLI 验收不要求安装 Codex 插件或启动 Agent。
+
 在一台未安装该插件的 Mac 上执行：
 
 ```sh
@@ -39,11 +51,11 @@ codex plugin list
 
 ## 创建版本标签
 
-当前插件版本是 `1.3.0`。发布验证完成后，可以创建对应标签：
+当前插件版本是 `1.4.0`。发布验证完成后，可以创建对应标签：
 
 ```powershell
-git tag -a v1.3.0 -m "Codex Efficiency and Health Analytics Dashboard 1.3.0"
-git push origin v1.3.0
+git tag -a v1.4.0 -m "Codex Efficiency and Health Analytics Dashboard 1.4.0"
+git push origin v1.4.0
 ```
 
 ## 后续更新
@@ -52,7 +64,8 @@ git push origin v1.3.0
 2. 更新插件清单中的 `version`、根目录 `package.json` 和 `CHANGELOG.md`。
 3. 运行 `npm run check`。
 4. 推送代码并等待三平台 CI 通过。
-5. 用户执行以下命令刷新：
+5. 独立 CLI 用户在更新后的源码根目录重新执行 `npm install -g .`。
+6. Codex 插件用户执行以下命令刷新：
 
 ```sh
 codex plugin marketplace upgrade codex-telemetry-plugins
